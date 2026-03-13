@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cane-eval"
+version = "0.1.0"
+description = "LLM-as-Judge evaluation for AI agents. YAML test suites, Claude-powered judging, failure mining, and training data export."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "Cane" },
+]
+keywords = ["llm", "eval", "evaluation", "ai-agents", "dpo", "training-data", "judge"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+dependencies = [
+    "anthropic>=0.39.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "ruff>=0.1.0",
+]
+
+[project.scripts]
+cane-eval = "cane_eval.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/cane-ai/cane-eval"
+Documentation = "https://github.com/cane-ai/cane-eval#readme"
+Repository = "https://github.com/cane-ai/cane-eval"
+Issues = "https://github.com/cane-ai/cane-eval/issues"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
