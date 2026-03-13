@@ -203,6 +203,91 @@ def print_mining_result(mining_result):
     print()
 
 
+def _severity_badge(severity):
+    """Return colored severity badge."""
+    colors = {"critical": "red", "high": "red", "medium": "yellow", "low": "dim"}
+    color = colors.get(severity, "dim")
+    return c(f" {severity.upper()} ", color)
+
+
+def _category_label(category):
+    """Return colored category label."""
+    return c(category.replace("_", " "), "cyan")
+
+
+def print_rca_result(rca_result):
+    """Print batch root cause analysis result."""
+    print()
+    print(c("  Root Cause Analysis", "bold"))
+    print(c("  " + "-" * 50, "dim"))
+    print()
+    print(f"  Analyzed {c(str(rca_result.total_analyzed), 'bold')} failures")
+    if rca_result.avg_failure_score:
+        print(f"  Avg failure score: {_score_color(rca_result.avg_failure_score)}")
+    if rca_result.score_range and rca_result.score_range != [0, 0]:
+        print(f"  Score range: {rca_result.score_range[0]:.0f} - {rca_result.score_range[1]:.0f}")
+    print()
+
+    if rca_result.summary:
+        print(f"  {c('Summary:', 'bold')} {rca_result.summary}")
+        print()
+
+    if rca_result.top_recommendation:
+        print(f"  {c('Top recommendation:', 'green')} {rca_result.top_recommendation}")
+        print()
+
+    if rca_result.root_causes:
+        print(f"  {c(f'{len(rca_result.root_causes)} Root Causes Found', 'bold')}")
+        print()
+        for i, rc in enumerate(rca_result.root_causes):
+            badge = _severity_badge(rc.severity)
+            cat = _category_label(rc.category)
+            print(f"  {i+1}. {badge} {cat}  {c(rc.title, 'bold')}")
+            if rc.description:
+                print(f"     {rc.description}")
+            if rc.evidence:
+                for ev in rc.evidence[:3]:
+                    print(f"     {c('>', 'dim')} {ev}")
+            if rc.recommendation:
+                print(f"     {c('Fix:', 'green')} {rc.recommendation}")
+            print()
+    print()
+
+
+def print_targeted_rca_result(targeted):
+    """Print targeted (single result) RCA."""
+    print()
+    print(c("  Targeted Root Cause Analysis", "bold"))
+    print(c("  " + "-" * 50, "dim"))
+    print()
+
+    q = targeted.question[:80] + "..." if len(targeted.question) > 80 else targeted.question
+    print(f"  Question: {q}")
+    print(f"  Score: {_score_color(targeted.score)}")
+    print(f"  Likely cause: {c(targeted.likely_cause.replace('_', ' '), 'cyan')}")
+    print(f"  Confidence: {c(f'{targeted.confidence}%', 'bold')}")
+    print()
+
+    if targeted.diagnosis:
+        print(f"  {c('Diagnosis:', 'bold')}")
+        print(f"    {targeted.diagnosis}")
+        print()
+
+    if targeted.contributing_factors:
+        print(f"  {c('Contributing factors:', 'bold')}")
+        for factor in targeted.contributing_factors:
+            print(f"    {c('>', 'dim')} {factor}")
+        print()
+
+    if targeted.fix_actions:
+        print(f"  {c('Fix actions:', 'bold')}")
+        for fa in targeted.fix_actions:
+            priority_color = {"high": "red", "medium": "yellow", "low": "dim"}.get(fa.priority, "dim")
+            print(f"    [{c(fa.priority.upper(), priority_color)}] {fa.action}  {c(f'({fa.effort})', 'dim')}")
+        print()
+    print()
+
+
 # ---- Commands ----
 
 def cmd_run(args):
@@ -308,6 +393,136 @@ def cmd_diff(args):
     print_diff(old_results, new_results)
 
 
+def cmd_rca(args):
+    """Run root cause analysis on eval failures."""
+    from cane_eval.suite import TestSuite
+    from cane_eval.engine import EvalRunner
+    from cane_eval.rca import RootCauseAnalyzer
+
+    # Load suite
+    try:
+        suite = TestSuite.from_yaml(args.suite)
+    except FileNotFoundError:
+        print(c(f"  Error: Suite file not found: {args.suite}", "red"))
+        sys.exit(1)
+    except Exception as e:
+        print(c(f"  Error loading suite: {e}", "red"))
+        sys.exit(1)
+
+    # Override model if specified
+    if args.model:
+        suite.model = args.model
+
+    print()
+    print(f"  {c('cane-eval rca', 'cyan')} {c(suite.name, 'bold')}")
+    print(f"  {len(suite.tests)} test cases | model: {suite.model}")
+    print()
+
+    # Parse tags
+    tags = args.tags.split(",") if args.tags else None
+
+    # If results JSON provided, load from file instead of running
+    if args.results:
+        try:
+            with open(args.results, "r") as f:
+                data = json.load(f)
+        except FileNotFoundError:
+            print(c(f"  Error: Results file not found: {args.results}", "red"))
+            sys.exit(1)
+
+        from cane_eval.engine import EvalResult as ER
+        from cane_eval.judge import JudgeResult, CriteriaScore
+
+        results_list = data.get("results", data if isinstance(data, list) else [])
+        eval_results = []
+        for r in results_list:
+            criteria_scores = []
+            for name, score_val in (r.get("criteria_scores") or {}).items():
+                criteria_scores.append(CriteriaScore(name=name, score=float(score_val), reasoning=""))
+            jr = JudgeResult(
+                overall_score=r.get("overall_score", 0),
+                overall_reasoning=r.get("judge_reasoning", ""),
+                status=r.get("status", "fail"),
+                criteria_scores=criteria_scores,
+            )
+            eval_results.append(ER(
+                question=r.get("question", ""),
+                expected_answer=r.get("expected_answer", ""),
+                agent_answer=r.get("agent_answer", ""),
+                judge_result=jr,
+                tags=r.get("tags", []),
+            ))
+
+        from cane_eval.engine import RunSummary
+        summary = RunSummary(
+            suite_name=data.get("suite_name", "loaded"),
+            total=len(eval_results),
+            results=eval_results,
+        )
+    else:
+        # Run the eval first
+        print("  Running eval first...")
+        print()
+
+        runner = EvalRunner(
+            api_key=args.api_key or os.environ.get("ANTHROPIC_API_KEY"),
+            model=args.model,
+            verbose=not args.quiet,
+            on_result=print_result if not args.quiet else None,
+        )
+
+        summary = runner.run(suite, tags=tags)
+
+        if not args.quiet:
+            print_summary(summary)
+
+    # Now run RCA
+    analyzer = RootCauseAnalyzer(
+        api_key=args.api_key or os.environ.get("ANTHROPIC_API_KEY"),
+        model=args.model or suite.model,
+        verbose=not args.quiet,
+    )
+
+    print(f"  {c('Running root cause analysis...', 'cyan')}")
+    print()
+
+    rca_result = analyzer.analyze(
+        summary,
+        max_score=args.threshold,
+        max_failures=args.max_failures,
+    )
+
+    if not args.quiet:
+        print_rca_result(rca_result)
+
+    # Optionally run targeted analysis on each failure
+    if args.targeted:
+        failures = [r for r in summary.results if r.score <= args.threshold]
+        failures.sort(key=lambda r: r.score)
+        targeted_limit = min(len(failures), args.targeted_max)
+
+        if failures:
+            print(f"  {c(f'Running targeted analysis on {targeted_limit} worst failures...', 'cyan')}")
+            print()
+
+            for r in failures[:targeted_limit]:
+                targeted = analyzer.analyze_result(r)
+                if not args.quiet:
+                    print_targeted_rca_result(targeted)
+
+    # Save results JSON
+    if args.output:
+        with open(args.output, "w") as f:
+            json.dump(rca_result.to_dict(), f, indent=2)
+        print(f"  Results saved to {args.output}")
+
+    # Exit code based on critical root causes
+    critical_count = sum(1 for rc in rca_result.root_causes if rc.severity == "critical")
+    if critical_count > 0:
+        sys.exit(1)
+    sys.exit(0)
+
+
 def cmd_validate(args):
     """Validate a test suite YAML file."""
     from cane_eval.suite import TestSuite
@@ -358,6 +573,20 @@ def main():
     diff_parser.add_argument("old", help="Path to older results JSON")
     diff_parser.add_argument("new", help="Path to newer results JSON")
 
+    # rca
+    rca_parser = subparsers.add_parser("rca", help="Run root cause analysis on eval failures")
+    rca_parser.add_argument("suite", help="Path to YAML test suite")
+    rca_parser.add_argument("--model", help="Override judge/analysis model")
+    rca_parser.add_argument("--api-key", help="Anthropic API key (or set ANTHROPIC_API_KEY)")
+    rca_parser.add_argument("--tags", help="Comma-separated tag filter")
+    rca_parser.add_argument("--results", help="Path to existing results JSON (skip running eval)")
+    rca_parser.add_argument("--threshold", type=float, default=60, help="Max score for analysis (default: 60)")
+    rca_parser.add_argument("--max-failures", type=int, default=30, help="Max failures to analyze (default: 30)")
+    rca_parser.add_argument("--targeted", action="store_true", help="Also run targeted analysis on each failure")
+    rca_parser.add_argument("--targeted-max", type=int, default=5, help="Max results for targeted analysis (default: 5)")
+    rca_parser.add_argument("--output", help="Save RCA results as JSON")
+    rca_parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
+
     # validate
     validate_parser = subparsers.add_parser("validate", help="Validate a test suite YAML")
     validate_parser.add_argument("suite", help="Path to YAML test suite")
@@ -368,6 +597,8 @@ def main():
         cmd_run(args)
     elif args.command == "diff":
         cmd_diff(args)
+    elif args.command == "rca":
+        cmd_rca(args)
     elif args.command == "validate":
         cmd_validate(args)
     else:

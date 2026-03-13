@@ -1,6 +1,6 @@
 # cane-eval
 
-LLM-as-Judge evaluation for AI agents. Define test suites in YAML, score responses with Claude, mine failures into training data.
+LLM-as-Judge evaluation for AI agents. Define test suites in YAML, score responses with Claude, analyze failure root causes, and mine failures into training data.
 
 ```
 pip install cane-eval
@@ -82,6 +82,15 @@ cane-eval run tests.yaml --export dpo --output training.jsonl
 # Mine failures and generate improved answers
 cane-eval run tests.yaml --mine --mine-threshold 60
 
+# Root cause analysis on failures
+cane-eval rca tests.yaml --threshold 60
+
+# RCA from existing results (skip re-running eval)
+cane-eval rca tests.yaml --results results.json
+
+# RCA with targeted deep dives on worst failures
+cane-eval rca tests.yaml --targeted --targeted-max 5
+
 # Compare two runs (regression diff)
 cane-eval diff results_v1.json results_v2.json
 
@@ -95,7 +104,7 @@ cane-eval run tests.yaml --quiet
 ### Python
 
 ```python
-from cane_eval import TestSuite, EvalRunner, Exporter, FailureMiner
+from cane_eval import TestSuite, EvalRunner, Exporter, FailureMiner, RootCauseAnalyzer
 
 # Load suite
 suite = TestSuite.from_yaml("tests.yaml")
@@ -106,6 +115,13 @@ summary = runner.run(suite, agent=lambda q: my_agent.ask(q))
 
 print(f"Score: {summary.overall_score}")
 print(f"Pass rate: {summary.pass_rate:.0f}%")
+
+# Root cause analysis on failures
+analyzer = RootCauseAnalyzer()
+rca = analyzer.analyze(summary, max_score=60)
+print(rca.summary)
+for rc in rca.root_causes:
+    print(f"  [{rc.severity}] {rc.title} -- {rc.recommendation}")
 
 # Export failures as DPO training pairs
 exporter = Exporter(summary)
@@ -202,6 +218,47 @@ print(result.failure_distribution)
 result.to_file("mined_dpo.jsonl", format="dpo")
 ```
 
+### Root Cause Analysis
+
+Go beyond "what failed" to understand "why it failed" with AI-powered root cause analysis:
+
+```python
+from cane_eval import EvalRunner, TestSuite, RootCauseAnalyzer
+
+suite = TestSuite.from_yaml("tests.yaml")
+runner = EvalRunner()
+summary = runner.run(suite, agent=my_agent)
+
+# Batch analysis: find patterns across all failures
+analyzer = RootCauseAnalyzer()
+rca = analyzer.analyze(summary, max_score=60)
+
+print(rca.summary)
+# "Agent consistently fails on refund-related questions due to missing policy documentation"
+
+print(rca.top_recommendation)
+# "Add refund policy documents to the agent's knowledge base"
+
+for rc in rca.root_causes:
+    print(f"[{rc.severity}] {rc.category}: {rc.title}")
+    print(f"  {rc.recommendation}")
+# [critical] knowledge_gap: Missing refund policy documentation
+#   Add refund policy documents to the agent's knowledge base
+# [high] prompt_issue: No instruction to cite sources
+#   Update system prompt to require source citations
+
+# Deep dive on a single failure
+targeted = analyzer.analyze_result(summary.results[0])
+print(targeted.diagnosis)
+print(targeted.likely_cause)  # "knowledge_gap", "hallucination", etc.
+for fix in targeted.fix_actions:
+    print(f"  [{fix.priority}] {fix.action} ({fix.effort})")
+```
+
+RCA categories: `knowledge_gap`, `prompt_issue`, `source_gap`, `behavior_pattern`, `data_quality`
+
+Severity levels: `critical`, `high`, `medium`, `low`
+
 ### Custom Criteria
 
 ```yaml
@@ -264,17 +321,23 @@ jobs:
 ## How It Works
 
 ```
-YAML Suite          Your Agent         Claude Judge        Training Data
------------         ----------         ------------        -------------
-questions    --->   get answers  --->  score 0-100   --->  DPO pairs
-expected             per test          per criteria        SFT examples
-criteria                               pass/warn/fail      OpenAI format
-custom rules                                               |
-                                                           v
-                                              Failure Mining (optional)
-                                              classify failure type
-                                              LLM rewrite bad answers
-                                              generate improved pairs
+YAML Suite          Your Agent         Claude Judge        Output
+-----------         ----------         ------------        ------
+questions    --->   get answers  --->  score 0-100   --->  DPO / SFT / OpenAI
+expected             per test          per criteria
+criteria                               pass/warn/fail
+custom rules                                |
+                                            v
+                               Root Cause Analysis (optional)
+                               find patterns across failures
+                               identify knowledge gaps, prompt issues
+                               generate actionable recommendations
+                                            |
+                                            v
+                               Failure Mining (optional)
+                               classify failure type
+                               LLM rewrite bad answers
+                               generate improved training pairs
 ```
 
 ## License
