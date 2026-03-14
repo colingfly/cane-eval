@@ -133,6 +133,84 @@ mined = miner.mine(summary, max_score=60)
 mined.to_file("mined_dpo.jsonl")
 ```
 
+### Framework Integrations
+
+One-liner eval for popular frameworks. No boilerplate needed.
+
+**LangChain:**
+
+```python
+from cane_eval import evaluate_langchain
+
+chain = prompt | llm | parser  # any LCEL chain
+results = evaluate_langchain(chain, suite="qa.yaml")
+```
+
+**LlamaIndex:**
+
+```python
+from cane_eval import evaluate_llamaindex
+
+query_engine = index.as_query_engine()
+results = evaluate_llamaindex(query_engine, suite="qa.yaml")
+```
+
+**OpenAI-compatible endpoints** (OpenAI, vLLM, Ollama, LiteLLM):
+
+```python
+from cane_eval import evaluate_openai
+
+# Any OpenAI-compatible endpoint
+results = evaluate_openai(
+    "http://localhost:11434/v1/chat/completions",
+    suite="qa.yaml",
+    openai_model="llama3",
+)
+
+# Or with the openai SDK client
+from openai import OpenAI
+client = OpenAI(base_url="http://localhost:11434/v1", api_key="ollama")
+results = evaluate_openai(client, suite="qa.yaml", openai_model="llama3")
+```
+
+**FastAPI agents:**
+
+```python
+from cane_eval import evaluate_fastapi
+
+# Running server
+results = evaluate_fastapi("http://localhost:8000/ask", suite="qa.yaml")
+
+# Or test in-process (no server needed)
+from fastapi import FastAPI
+app = FastAPI()
+results = evaluate_fastapi(app, suite="qa.yaml", endpoint="/ask")
+```
+
+All integrations support mining, RCA, and Cane Cloud push:
+
+```python
+results = evaluate_langchain(
+    chain,
+    suite="qa.yaml",
+    mine=True,                             # mine failures into training data
+    rca=True,                              # root cause analysis
+    cloud="https://app.cane.dev",          # push results to Cane Cloud
+    cloud_api_key="sk-...",
+    environment_id="env_abc123",
+)
+```
+
+Install integration dependencies:
+
+```bash
+pip install cane-eval[langchain]      # LangChain
+pip install cane-eval[llamaindex]     # LlamaIndex
+pip install cane-eval[openai]         # OpenAI SDK
+pip install cane-eval[fastapi]        # FastAPI TestClient
+pip install cane-eval[integrations]   # all of the above
+```
+
 ### HTTP Agent Target
 
 Point eval at any HTTP endpoint:

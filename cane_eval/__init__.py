@@ -14,6 +14,14 @@ from cane_eval.export import Exporter
 from cane_eval.mining import FailureMiner
 from cane_eval.rca import RootCauseAnalyzer, RCAResult, TargetedRCAResult
 
+# Integrations (lazy-loaded to avoid import errors if frameworks not installed)
+from cane_eval.integrations import (
+    evaluate_langchain,
+    evaluate_llamaindex,
+    evaluate_openai,
+    evaluate_fastapi,
+)
+
 __all__ = [
     "TestSuite",
     "TestCase",
@@ -28,4 +36,9 @@ __all__ = [
     "RootCauseAnalyzer",
     "RCAResult",
     "TargetedRCAResult",
+    # Integrations
+    "evaluate_langchain",
+    "evaluate_llamaindex",
+    "evaluate_openai",
+    "evaluate_fastapi",
 ]

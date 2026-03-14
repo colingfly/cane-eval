@@ -30,6 +30,26 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+langchain = [
+    "langchain-core>=0.1.0",
+]
+llamaindex = [
+    "llama-index-core>=0.10.0",
+]
+openai = [
+    "openai>=1.0.0",
+]
+fastapi = [
+    "fastapi>=0.100.0",
+    "httpx>=0.24.0",
+]
+integrations = [
+    "langchain-core>=0.1.0",
+    "llama-index-core>=0.10.0",
+    "openai>=1.0.0",
+    "fastapi>=0.100.0",
+    "httpx>=0.24.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -40,10 +60,10 @@ dev = [
 cane-eval = "cane_eval.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/cane-ai/cane-eval"
-Documentation = "https://github.com/cane-ai/cane-eval#readme"
-Repository = "https://github.com/cane-ai/cane-eval"
-Issues = "https://github.com/cane-ai/cane-eval/issues"
+Homepage = "https://github.com/colingfly/cane-eval"
+Documentation = "https://github.com/colingfly/cane-eval#readme"
+Repository = "https://github.com/colingfly/cane-eval"
+Issues = "https://github.com/colingfly/cane-eval/issues"
 
 [tool.ruff]
 line-length = 120
