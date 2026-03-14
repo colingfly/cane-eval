@@ -2,6 +2,8 @@
 
 LLM-as-Judge evaluation for AI agents. Define test suites in YAML, score responses with Claude, analyze failure root causes, and mine failures into training data.
 
+[![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/colingfly/cane-eval/blob/main/examples/quickstart.ipynb)
+
 ```
 pip install cane-eval
 ```
