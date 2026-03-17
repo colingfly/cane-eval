@@ -1,11 +1,29 @@
 # cane-eval
 
-Eval toolkit for AI agents. YAML test suites, multi-model judging, failure mining, root cause analysis, and training data export.
+The agent reliability layer. Catch what breaks in production before it ships.
 
 [![PyPI](https://img.shields.io/pypi/v/cane-eval)](https://pypi.org/project/cane-eval/)
 
 ```
 pip install cane-eval
+```
+
+## What it does
+
+LLM-as-Judge eval + schema validation + latency tracking + reliability scoring. One tool, one score, one answer: **would this break in production?**
+
+```
+  Support Agent                              28.4s
+
+  Overall: [=========----------] 47
+
+  1 passed  1 warned  3 failed  (5 total)
+  Pass rate: 20%
+
+  Latency:  p50: 1.2s  p95: 8.4s  max: 12.1s
+  Schema:   3/5 valid (60%)
+
+  Reliability: [=======-----------] 52 (D)
 ```
 
 ## 30-Second Demo
@@ -15,42 +33,31 @@ export ANTHROPIC_API_KEY=sk-ant-...
 cane-eval demo
 ```
 
-```
-  Running a deliberately flawed support agent against 5 test cases...
-
-   FAIL  52  What is your return policy?
-         Missing all specific policy details customers need.
-   FAIL   0  How do I reset my password?
-         Entirely fabricated -- contradicts the expected process.
-   WARN  66  Do you offer international shipping?
-   FAIL  16  What payment methods do you accept?
-         Fabricated a competitor recommendation with false claims.
-   PASS 100  How do I contact customer support?
-
-  Overall: 47/100  (28.4s)
-  1 passed  1 warned  3 failed
-```
-
-Three failures in 28 seconds. That's what your agents are doing without evals.
-
 ## Quick Start
 
 **1. Define tests** (`tests.yaml`):
 
 ```yaml
 name: Support Agent
-model: claude-sonnet-4-5-20250929
 
 criteria:
   - key: accuracy
-    label: Accuracy
     weight: 40
   - key: completeness
-    label: Completeness
     weight: 30
   - key: hallucination
-    label: Hallucination Check
     weight: 30
+
+# Optional: validate response structure
+schema:
+  type: object
+  required: [answer, sources]
+  properties:
+    answer: { type: string }
+    sources: { type: array }
+
+# Optional: latency target for reliability scoring
+latency_target_ms: 5000
 
 tests:
   - question: What is the return policy?
@@ -65,44 +72,41 @@ tests:
 cane-eval run tests.yaml
 ```
 
-**3. Mine failures into training data**:
+**3. Production checks**:
 
 ```bash
-cane-eval run tests.yaml --mine --export dpo
+# Validate responses against JSON schema
+cane-eval run tests.yaml --schema schema.json --fail-on-schema
+
+# Fail if p95 latency exceeds 10 seconds
+cane-eval run tests.yaml --latency-p95 10000
+
+# Both + mine failures into training data
+cane-eval run tests.yaml --schema schema.json --latency-p95 10000 --mine --export dpo
 ```
+
+## Reliability Score
+
+Every eval run produces an Agent Reliability Score (0-100) across three pillars:
+
+| Pillar | What it measures | How |
+|--------|-----------------|-----|
+| **Correctness** | Does the answer look good? | LLM judge (accuracy, completeness, hallucination) |
+| **Structural** | Does the response match expected format? | JSON schema validation |
+| **Performance** | Is it fast enough for production? | p95 latency vs target |
+
+Grades: **A** (90+) production-ready, **B** (75+) mostly reliable, **C** (60+) needs work, **D** (40+) significant gaps, **F** (<40) not ready.
 
 ## Multi-Model Judging
 
-Use any LLM as judge. Auto-detects provider from model name.
+Any LLM as judge. Auto-detects provider from model name.
 
 ```bash
-# Anthropic (default)
-cane-eval run tests.yaml
-
-# OpenAI
-cane-eval run tests.yaml --provider openai --model gpt-4o
-
-# Gemini
-cane-eval run tests.yaml --provider gemini --model gemini-2.0-flash
-
-# Ollama / vLLM / any OpenAI-compatible endpoint
-cane-eval run tests.yaml --provider ollama --model llama3 --base-url http://localhost:11434/v1
+cane-eval run tests.yaml                                                       # Claude (default)
+cane-eval run tests.yaml --provider openai --model gpt-4o                      # OpenAI
+cane-eval run tests.yaml --provider gemini --model gemini-2.0-flash            # Gemini
+cane-eval run tests.yaml --provider ollama --model llama3 --base-url http://localhost:11434/v1  # Local
 ```
-
-```python
-from cane_eval import Judge
-
-# Auto-detects OpenAI from model name
-judge = Judge(model="gpt-4o", api_key="sk-...")
-
-# Gemini
-judge = Judge(model="gemini-2.0-flash", api_key="...")
-
-# Local Ollama
-judge = Judge(provider="ollama", model="llama3", base_url="http://localhost:11434/v1")
-```
-
-Install provider dependencies:
 
 ```bash
 pip install cane-eval[openai]          # OpenAI
@@ -113,127 +117,84 @@ pip install cane-eval[all-providers]   # everything
 ## CLI
 
 ```bash
-cane-eval run tests.yaml                          # run eval suite
-cane-eval run tests.yaml --tags policy,account    # filter by tags
-cane-eval run tests.yaml --export dpo             # export training data
-cane-eval run tests.yaml --mine                   # mine failures + rewrite
-cane-eval rca tests.yaml --threshold 60           # root cause analysis
-cane-eval rca tests.yaml --targeted               # deep dive on worst failures
-cane-eval diff results_v1.json results_v2.json    # regression diff
-cane-eval validate tests.yaml                     # validate YAML
-cane-eval run tests.yaml --quiet                  # CI mode (exit 1 on fail)
+cane-eval run tests.yaml                          # run eval
+cane-eval run tests.yaml --schema schema.json     # + schema validation
+cane-eval run tests.yaml --latency-p95 10000      # + latency threshold
+cane-eval run tests.yaml --mine --export dpo      # + failure mining
+cane-eval rca tests.yaml --targeted               # root cause analysis
+cane-eval diff old.json new.json                  # regression diff
+cane-eval demo                                    # try it in 30 seconds
 ```
 
 ## Python API
 
 ```python
-from cane_eval import TestSuite, EvalRunner, FailureMiner, RootCauseAnalyzer
+from cane_eval import TestSuite, EvalRunner
 
 suite = TestSuite.from_yaml("tests.yaml")
-runner = EvalRunner()
+runner = EvalRunner(
+    schema={"type": "object", "required": ["answer"]},
+    latency_p95=10000,
+)
 summary = runner.run(suite, agent=lambda q: my_agent.ask(q))
 
 print(f"Score: {summary.overall_score}")
-
-# Root cause analysis
-analyzer = RootCauseAnalyzer()
-rca = analyzer.analyze(summary, max_score=60)
-for rc in rca.root_causes:
-    print(f"  [{rc.severity}] {rc.title} -- {rc.recommendation}")
-
-# Mine failures into DPO training pairs
-miner = FailureMiner()
-mined = miner.mine(summary, max_score=60)
-mined.to_file("training.jsonl", format="dpo")
+print(f"Reliability: {summary.reliability_score} ({summary.reliability_grade})")
+print(f"Latency p95: {summary.latency.p95_ms}ms")
+print(f"Schema: {summary.schema_pass}/{summary.schema_pass + summary.schema_fail} valid")
 ```
 
 ## Framework Integrations
 
-One-liner eval for LangChain, LlamaIndex, OpenAI endpoints, and FastAPI agents.
-
 ```python
 from cane_eval import evaluate_langchain, evaluate_llamaindex, evaluate_openai, evaluate_fastapi
 
-# LangChain
 results = evaluate_langchain(chain, suite="qa.yaml")
-
-# LlamaIndex
 results = evaluate_llamaindex(query_engine, suite="qa.yaml")
-
-# OpenAI-compatible (OpenAI, vLLM, Ollama, LiteLLM)
-results = evaluate_openai("http://localhost:11434/v1/chat/completions", suite="qa.yaml", openai_model="llama3")
-
-# FastAPI
+results = evaluate_openai("http://localhost:11434/v1/chat/completions", suite="qa.yaml")
 results = evaluate_fastapi("http://localhost:8000/ask", suite="qa.yaml")
-```
-
-```bash
-pip install cane-eval[langchain]      # LangChain
-pip install cane-eval[llamaindex]     # LlamaIndex
-pip install cane-eval[fastapi]        # FastAPI
-pip install cane-eval[integrations]   # all of the above
 ```
 
 ## Eval Targets
 
-Point eval at any HTTP endpoint or CLI tool:
-
 ```yaml
-# HTTP
+# HTTP endpoint
 target:
   type: http
   url: https://my-agent.com/api/ask
-  method: POST
   payload_template: '{"query": "{{question}}"}'
   response_path: data.answer
-  headers:
-    Authorization: Bearer ${AGENT_API_KEY}
 
-# CLI
+# CLI tool
 target:
   type: command
   command: python my_agent.py --query "{{question}}"
 ```
 
-## Export Formats
-
-| Format | Use Case | Structure |
-|--------|----------|-----------|
-| `dpo` | Direct Preference Optimization | `{prompt, chosen, rejected}` |
-| `sft` | Supervised Fine-Tuning | `{prompt, completion, metadata}` |
-| `openai` | OpenAI fine-tuning API | `{messages: [{role, content}]}` |
-| `raw` | Debugging | Full eval result with all scores |
-
 ## CI
 
 ```yaml
 # .github/workflows/eval.yml
-name: Agent Eval
-on: [push]
-jobs:
-  eval:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-      - run: pip install cane-eval
-      - run: cane-eval run tests/eval_suite.yaml --quiet
-        env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+- run: pip install cane-eval
+- run: cane-eval run tests.yaml --schema schema.json --latency-p95 10000 --quiet
+  env:
+    ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```
+
+Exit code 1 on failures. Add `--fail-on-warn` or `--fail-on-schema` for stricter checks.
 
 ## How It Works
 
 ```
-YAML Suite --> Your Agent --> LLM Judge --> Training Data (DPO/SFT/OpenAI)
-                                |
-                                v
-                         Root Cause Analysis --> fix recommendations
-                                |
-                                v
-                         Failure Mining --> improved answer rewrites
+YAML Suite --> Agent --> LLM Judge -----> Reliability Score (A-F)
+                  |          |                    |
+                  |          v                    |
+                  |   Schema Check                |
+                  |   Latency Stats               |
+                  |          |                    v
+                  v          v              Training Data
+            Root Cause    Failure           (DPO/SFT/OpenAI)
+            Analysis      Mining
 ```
 
 ## License

@@ -28,6 +28,7 @@ class EvalResult:
     response_time_ms: int = 0
     tags: list[str] = field(default_factory=list)
     context: Optional[str] = None
+    schema_result: Optional[SchemaResult] = None
 
     @property
     def score(self) -> float:
@@ -38,7 +39,7 @@ class EvalResult:
         return self.judge_result.status
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "question": self.question,
             "expected_answer": self.expected_answer,
             "agent_answer": self.agent_answer,
@@ -49,6 +50,61 @@ class EvalResult:
             "response_time_ms": self.response_time_ms,
             "tags": self.tags,
         }
+        if self.schema_result is not None:
+            d["schema"] = self.schema_result.to_dict()
+        return d
+
+
+@dataclass
+class LatencyStats:
+    """Latency statistics for an eval run."""
+    p50_ms: int = 0
+    p95_ms: int = 0
+    p99_ms: int = 0
+    max_ms: int = 0
+    min_ms: int = 0
+    mean_ms: int = 0
+
+    @classmethod
+    def from_results(cls, results: list) -> "LatencyStats":
+        """Compute latency stats from a list of EvalResults."""
+        times = sorted(r.response_time_ms for r in results if r.response_time_ms > 0)
+        if not times:
+            return cls()
+
+        def percentile(sorted_vals, pct):
+            idx = int(len(sorted_vals) * pct / 100)
+            idx = min(idx, len(sorted_vals) - 1)
+            return sorted_vals[idx]
+
+        return cls(
+            p50_ms=percentile(times, 50),
+            p95_ms=percentile(times, 95),
+            p99_ms=percentile(times, 99),
+            max_ms=times[-1],
+            min_ms=times[0],
+            mean_ms=int(sum(times) / len(times)),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "p50_ms": self.p50_ms,
+            "p95_ms": self.p95_ms,
+            "p99_ms": self.p99_ms,
+            "max_ms": self.max_ms,
+            "min_ms": self.min_ms,
+            "mean_ms": self.mean_ms,
+        }
+
+
+@dataclass
+class SchemaResult:
+    """Schema validation result for a single test case."""
+    valid: bool = True
+    errors: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict:
+        return {"valid": self.valid, "errors": self.errors}
 
 
 @dataclass
@@ -64,6 +120,11 @@ class RunSummary:
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     duration_seconds: float = 0.0
+    latency: Optional[LatencyStats] = None
+    schema_pass: int = 0
+    schema_fail: int = 0
+    reliability_score: Optional[float] = None
+    reliability_grade: str = ""
 
     @property
     def pass_rate(self) -> float:
@@ -82,7 +143,7 @@ class RunSummary:
         return [r for r in self.results if tag in r.tags]
 
     def to_dict(self) -> dict:
-        return {
+        d = {
             "suite_name": self.suite_name,
             "total": self.total,
             "passed": self.passed,
@@ -95,6 +156,15 @@ class RunSummary:
             "completed_at": self.completed_at,
             "results": [r.to_dict() for r in self.results],
         }
+        if self.latency:
+            d["latency"] = self.latency.to_dict()
+        if self.schema_pass or self.schema_fail:
+            d["schema_pass"] = self.schema_pass
+            d["schema_fail"] = self.schema_fail
+        if self.reliability_score is not None:
+            d["reliability_score"] = self.reliability_score
+            d["reliability_grade"] = self.reliability_grade
+        return d
 
 
 # ---- Agent callers ----
@@ -211,6 +281,9 @@ class EvalRunner:
         on_result: Optional[Callable[[EvalResult, int, int], None]] = None,
         provider: str = "anthropic",
         base_url: Optional[str] = None,
+        schema: Optional[dict] = None,
+        latency_p95: Optional[int] = None,
+        latency_target: int = 5000,
     ):
         """
         Args:
@@ -220,6 +293,9 @@ class EvalRunner:
             on_result: Callback after each result: fn(result, index, total)
             provider: Judge provider ("anthropic", "openai", "gemini", "openai-compatible")
             base_url: Base URL for OpenAI-compatible endpoints
+            schema: JSON Schema dict to validate agent responses against
+            latency_p95: p95 latency threshold in ms (fail run if exceeded)
+            latency_target: Target latency in ms for reliability scoring (default: 5000)
         """
         self.api_key = api_key
         self.model_override = model
@@ -227,6 +303,9 @@ class EvalRunner:
         self.on_result = on_result
         self.provider = provider
         self.base_url = base_url
+        self.schema = schema
+        self.latency_p95 = latency_p95
+        self.latency_target = latency_target
 
     def run(
         self,
@@ -293,6 +372,11 @@ class EvalRunner:
                     status="warn",
                 )
 
+            # Schema validation
+            schema_result = None
+            if self.schema:
+                schema_result = self._validate_schema(agent_result["answer"])
+
             # Build result
             eval_result = EvalResult(
                 question=tc.question,
@@ -303,6 +387,7 @@ class EvalRunner:
                 response_time_ms=agent_result.get("response_time_ms", 0),
                 tags=tc.tags,
                 context=tc.context,
+                schema_result=schema_result,
             )
             results.append(eval_result)
 
@@ -317,6 +402,18 @@ class EvalRunner:
         duration = time.time() - start_time
         overall = round(sum(r.score for r in results) / len(results), 1) if results else 0.0
 
+        # Latency stats
+        latency_stats = LatencyStats.from_results(results)
+
+        # Schema stats
+        schema_pass = sum(1 for r in results if r.schema_result and r.schema_result.valid)
+        schema_fail = sum(1 for r in results if r.schema_result and not r.schema_result.valid)
+
+        # Reliability score
+        reliability_score, reliability_grade = self._compute_reliability(
+            results, latency_stats, overall, schema_pass, schema_fail,
+        )
+
         summary = RunSummary(
             suite_name=suite.name,
             total=len(results),
@@ -328,6 +425,11 @@ class EvalRunner:
             started_at=started_at,
             completed_at=datetime.utcnow().isoformat(),
             duration_seconds=duration,
+            latency=latency_stats,
+            schema_pass=schema_pass,
+            schema_fail=schema_fail,
+            reliability_score=reliability_score,
+            reliability_grade=reliability_grade,
         )
 
         if self.verbose:
@@ -415,6 +517,10 @@ class EvalRunner:
                     status="warn",
                 )
 
+            schema_result = None
+            if self.schema:
+                schema_result = self._validate_schema(agent_result["answer"])
+
             eval_result = EvalResult(
                 question=tc.question,
                 expected_answer=tc.expected_answer or "",
@@ -424,6 +530,7 @@ class EvalRunner:
                 response_time_ms=agent_result.get("response_time_ms", 0),
                 tags=tc.tags,
                 context=tc.context,
+                schema_result=schema_result,
             )
             results.append(eval_result)
 
@@ -434,6 +541,13 @@ class EvalRunner:
 
         duration = time.time() - start_time
         overall = round(sum(r.score for r in results) / len(results), 1) if results else 0.0
+
+        latency_stats = LatencyStats.from_results(results)
+        schema_pass = sum(1 for r in results if r.schema_result and r.schema_result.valid)
+        schema_fail = sum(1 for r in results if r.schema_result and not r.schema_result.valid)
+        reliability_score, reliability_grade = self._compute_reliability(
+            results, latency_stats, overall, schema_pass, schema_fail,
+        )
 
         return RunSummary(
             suite_name=suite.name,
@@ -446,6 +560,11 @@ class EvalRunner:
             started_at=started_at,
             completed_at=datetime.utcnow().isoformat(),
             duration_seconds=duration,
+            latency=latency_stats,
+            schema_pass=schema_pass,
+            schema_fail=schema_fail,
+            reliability_score=reliability_score,
+            reliability_grade=reliability_grade,
         )
 
     @staticmethod
@@ -579,6 +698,97 @@ class EvalRunner:
                 print(f"\n  Pre-flight: {len(errors)} issue(s) found")
 
         return {"ok": ok, "checks": checks, "errors": errors}
+
+    def _validate_schema(self, agent_answer: str) -> SchemaResult:
+        """Validate agent answer against JSON schema."""
+        try:
+            import jsonschema
+        except ImportError:
+            return SchemaResult(valid=False, errors=["jsonschema package not installed. pip install jsonschema"])
+
+        # Try to parse as JSON
+        try:
+            data = json.loads(agent_answer)
+        except (json.JSONDecodeError, TypeError):
+            return SchemaResult(valid=False, errors=["Response is not valid JSON"])
+
+        # Validate against schema
+        try:
+            jsonschema.validate(instance=data, schema=self.schema)
+            return SchemaResult(valid=True)
+        except jsonschema.ValidationError as e:
+            return SchemaResult(valid=False, errors=[e.message])
+        except jsonschema.SchemaError as e:
+            return SchemaResult(valid=False, errors=[f"Invalid schema: {e.message}"])
+
+    def _compute_reliability(
+        self,
+        results: list,
+        latency: LatencyStats,
+        accuracy_score: float,
+        schema_pass: int,
+        schema_fail: int,
+    ) -> tuple:
+        """
+        Compute Agent Reliability Score.
+
+        Three pillars:
+        - Correctness (accuracy_score from judge, 0-100)
+        - Structural (schema adherence, 0 or 100 per test)
+        - Performance (latency vs target)
+
+        Returns (score, grade) tuple.
+        """
+        has_schema = (schema_pass + schema_fail) > 0
+        has_latency = latency.p95_ms > 0
+
+        # Correctness: just the judge score
+        correctness = accuracy_score
+
+        # Schema: percentage valid
+        if has_schema:
+            schema_score = (schema_pass / (schema_pass + schema_fail)) * 100
+        else:
+            schema_score = None
+
+        # Latency: score based on p95 vs target
+        if has_latency:
+            target = self.latency_target
+            if latency.p95_ms <= target:
+                latency_score = 100.0
+            else:
+                # Linearly degrade: at 2x target = 0
+                latency_score = max(0, 100 - ((latency.p95_ms - target) / target) * 100)
+        else:
+            latency_score = None
+
+        # Weighted composite
+        if has_schema and has_latency:
+            # All three pillars
+            reliability = (correctness * 0.5) + (schema_score * 0.25) + (latency_score * 0.25)
+        elif has_schema:
+            reliability = (correctness * 0.6) + (schema_score * 0.4)
+        elif has_latency:
+            reliability = (correctness * 0.7) + (latency_score * 0.3)
+        else:
+            # Only correctness available
+            reliability = correctness
+
+        reliability = round(reliability, 1)
+
+        # Grade
+        if reliability >= 90:
+            grade = "A"
+        elif reliability >= 75:
+            grade = "B"
+        elif reliability >= 60:
+            grade = "C"
+        elif reliability >= 40:
+            grade = "D"
+        else:
+            grade = "F"
+
+        return reliability, grade
 
     def _get_answer(
         self,

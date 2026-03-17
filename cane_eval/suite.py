@@ -130,6 +130,8 @@ class TestSuite:
         criteria: Optional[list[Criterion]] = None,
         custom_rules: Optional[list[str]] = None,
         tests: Optional[list[TestCase]] = None,
+        schema: Optional[dict] = None,
+        latency_target_ms: Optional[int] = None,
     ):
         self.name = name
         self.description = description
@@ -138,6 +140,8 @@ class TestSuite:
         self.criteria = criteria or list(DEFAULT_CRITERIA)
         self.custom_rules = custom_rules or []
         self.tests = tests or []
+        self.schema = schema
+        self.latency_target_ms = latency_target_ms
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "TestSuite":
@@ -192,6 +196,8 @@ class TestSuite:
             criteria=criteria,
             custom_rules=custom_rules,
             tests=tests,
+            schema=data.get("schema"),
+            latency_target_ms=data.get("latency_target_ms"),
         )
 
     @classmethod
@@ -231,6 +237,8 @@ class TestSuite:
             criteria=criteria,
             custom_rules=data.get("custom_rules", []),
             tests=tests,
+            schema=data.get("schema"),
+            latency_target_ms=data.get("latency_target_ms"),
         )
 
     def criteria_dicts(self) -> list[dict]:

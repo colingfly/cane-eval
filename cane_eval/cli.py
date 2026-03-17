@@ -81,6 +81,22 @@ def _bar(score, width=20):
     return f"[{bar_str}]"
 
 
+def _format_ms(ms):
+    """Format milliseconds to human-readable."""
+    if ms >= 1000:
+        return f"{ms / 1000:.1f}s"
+    return f"{ms}ms"
+
+
+def _latency_color(ms, threshold=5000):
+    """Color latency based on threshold."""
+    if ms <= threshold:
+        return c(_format_ms(ms), "green")
+    if ms <= threshold * 1.5:
+        return c(_format_ms(ms), "yellow")
+    return c(_format_ms(ms), "red")
+
+
 def print_result(result, index, total):
     """Print a single eval result."""
     q = result.question[:70] + "..." if len(result.question) > 70 else result.question
@@ -88,12 +104,32 @@ def print_result(result, index, total):
     score = _score_color(result.score)
     bar = _bar(result.score)
 
-    print(f"  {badge} {c(f'{index}/{total}', 'dim')} {bar} {score}  {q}")
+    # Build suffix with latency + schema
+    suffix = ""
+    if result.response_time_ms > 0:
+        suffix += f"  {c(_format_ms(result.response_time_ms), 'dim')}"
+    if result.schema_result is not None:
+        if result.schema_result.valid:
+            suffix += f"  {c('schema:OK', 'green')}"
+        else:
+            suffix += f"  {c('schema:FAIL', 'red')}"
+
+    print(f"  {badge} {c(f'{index}/{total}', 'dim')} {bar} {score}  {q}{suffix}")
 
     if result.status == "fail":
         reasoning = result.judge_result.overall_reasoning
         if reasoning:
             print(f"         {c(reasoning[:120], 'dim')}")
+
+    if result.schema_result and not result.schema_result.valid:
+        for err in result.schema_result.errors[:2]:
+            print(f"         {c(f'schema: {err[:100]}', 'red')}")
+
+
+def _grade_color(grade):
+    """Color a reliability grade."""
+    colors = {"A": "green", "B": "green", "C": "yellow", "D": "red", "F": "red"}
+    return c(grade, colors.get(grade, "dim"))
 
 
 def print_summary(summary):
@@ -116,6 +152,28 @@ def print_summary(summary):
     f_count = c(f"{summary.failed} failed", "red")
     print(f"  {p}  {w}  {f_count}  ({summary.total} total)")
     print(f"  Pass rate: {c(f'{summary.pass_rate:.0f}%', 'bold')}")
+
+    # Latency stats
+    if summary.latency and summary.latency.p50_ms > 0:
+        print()
+        lat = summary.latency
+        print(f"  Latency:  p50: {_latency_color(lat.p50_ms)}  p95: {_latency_color(lat.p95_ms)}  max: {_latency_color(lat.max_ms)}")
+
+    # Schema stats
+    if summary.schema_pass or summary.schema_fail:
+        total_schema = summary.schema_pass + summary.schema_fail
+        pct = summary.schema_pass / total_schema * 100 if total_schema else 0
+        schema_label = c(f"{summary.schema_pass}/{total_schema} valid", "green" if pct == 100 else "yellow" if pct >= 50 else "red")
+        print(f"  Schema:   {schema_label} ({pct:.0f}%)")
+
+    # Reliability score
+    if summary.reliability_score is not None:
+        grade = _grade_color(summary.reliability_grade)
+        rel_bar = _bar(summary.reliability_score, 20)
+        rel_score = _score_color(summary.reliability_score)
+        print()
+        print(f"  {c('Reliability:', 'bold')} {rel_bar} {rel_score} ({grade})")
+
     print()
 
 
@@ -328,6 +386,23 @@ def cmd_run(args):
     provider_cls = PROVIDERS.get(resolved)
     env_key = provider_cls.env_key() if provider_cls else "ANTHROPIC_API_KEY"
 
+    # Load schema if specified
+    schema = None
+    if args.schema:
+        try:
+            with open(args.schema, "r") as f:
+                schema = json.load(f)
+        except FileNotFoundError:
+            print(c(f"  Error: Schema file not found: {args.schema}", "red"))
+            sys.exit(1)
+        except json.JSONDecodeError as e:
+            print(c(f"  Error: Invalid JSON in schema file: {e}", "red"))
+            sys.exit(1)
+
+    # Also check for inline schema in suite
+    if schema is None and hasattr(suite, 'schema') and suite.schema:
+        schema = suite.schema
+
     # Run
     runner = EvalRunner(
         api_key=args.api_key or os.environ.get(env_key),
@@ -336,6 +411,9 @@ def cmd_run(args):
         on_result=print_result if not args.quiet else None,
         provider=provider,
         base_url=base_url,
+        schema=schema,
+        latency_p95=args.latency_p95,
+        latency_target=args.latency_target,
     )
 
     summary = runner.run(suite, tags=tags)
@@ -382,6 +460,18 @@ def cmd_run(args):
             mine_output = args.mine_output or "mined_dpo.jsonl"
             mining_result.to_file(mine_output, format=args.mine_format)
             print(f"  Mined data saved to {mine_output}")
+
+    # Check latency threshold
+    if args.latency_p95 and summary.latency and summary.latency.p95_ms > args.latency_p95:
+        print(c(f"  FAIL: p95 latency {summary.latency.p95_ms}ms exceeds threshold {args.latency_p95}ms", "red"))
+        print()
+        sys.exit(1)
+
+    # Check schema failures
+    if args.fail_on_schema and summary.schema_fail > 0:
+        print(c(f"  FAIL: {summary.schema_fail} response(s) failed schema validation", "red"))
+        print()
+        sys.exit(1)
 
     # Exit code based on failures
     if args.fail_on_warn:
@@ -622,7 +712,7 @@ def main():
         prog="cane-eval",
         description="LLM-as-Judge evaluation for AI agents",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.3.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 0.4.0")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
@@ -644,6 +734,10 @@ def main():
     run_parser.add_argument("--fail-on-warn", action="store_true", help="Exit 1 on warnings too")
     run_parser.add_argument("--provider", default="anthropic", help="Judge provider: anthropic, openai, gemini, openai-compatible (default: anthropic)")
     run_parser.add_argument("--base-url", help="Base URL for OpenAI-compatible endpoints (e.g. http://localhost:11434/v1)")
+    run_parser.add_argument("--schema", help="Path to JSON Schema file to validate agent responses against")
+    run_parser.add_argument("--latency-p95", type=int, help="Fail if p95 latency exceeds this threshold (ms)")
+    run_parser.add_argument("--latency-target", type=int, default=5000, help="Target latency for reliability scoring in ms (default: 5000)")
+    run_parser.add_argument("--fail-on-schema", action="store_true", help="Exit 1 if any response fails schema validation")
 
     # diff
     diff_parser = subparsers.add_parser("diff", help="Compare two eval runs (regression diff)")
