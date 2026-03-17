@@ -318,12 +318,24 @@ def cmd_run(args):
     # Parse tags
     tags = args.tags.split(",") if args.tags else None
 
+    # Determine provider
+    provider = getattr(args, "provider", "anthropic") or "anthropic"
+    base_url = getattr(args, "base_url", None)
+
+    # Pick the right API key env var for the provider
+    from cane_eval.providers import PROVIDERS, PROVIDER_ALIASES
+    resolved = PROVIDER_ALIASES.get(provider.lower(), provider.lower())
+    provider_cls = PROVIDERS.get(resolved)
+    env_key = provider_cls.env_key() if provider_cls else "ANTHROPIC_API_KEY"
+
     # Run
     runner = EvalRunner(
-        api_key=args.api_key or os.environ.get("ANTHROPIC_API_KEY"),
+        api_key=args.api_key or os.environ.get(env_key),
         model=args.model,
         verbose=not args.quiet,
         on_result=print_result if not args.quiet else None,
+        provider=provider,
+        base_url=base_url,
     )
 
     summary = runner.run(suite, tags=tags)
@@ -350,9 +362,11 @@ def cmd_run(args):
         from cane_eval.mining import FailureMiner
 
         miner = FailureMiner(
-            api_key=args.api_key or os.environ.get("ANTHROPIC_API_KEY"),
+            api_key=args.api_key or os.environ.get(env_key),
             model=args.model or suite.model,
             verbose=not args.quiet,
+            provider=provider,
+            base_url=base_url,
         )
 
         mining_result = miner.mine(
@@ -464,11 +478,22 @@ def cmd_rca(args):
         print("  Running eval first...")
         print()
 
+        # Determine provider
+        provider = getattr(args, "provider", "anthropic") or "anthropic"
+        base_url = getattr(args, "base_url", None)
+
+        from cane_eval.providers import PROVIDERS, PROVIDER_ALIASES
+        resolved = PROVIDER_ALIASES.get(provider.lower(), provider.lower())
+        provider_cls = PROVIDERS.get(resolved)
+        env_key = provider_cls.env_key() if provider_cls else "ANTHROPIC_API_KEY"
+
         runner = EvalRunner(
-            api_key=args.api_key or os.environ.get("ANTHROPIC_API_KEY"),
+            api_key=args.api_key or os.environ.get(env_key),
             model=args.model,
             verbose=not args.quiet,
             on_result=print_result if not args.quiet else None,
+            provider=provider,
+            base_url=base_url,
         )
 
         summary = runner.run(suite, tags=tags)
@@ -476,11 +501,22 @@ def cmd_rca(args):
         if not args.quiet:
             print_summary(summary)
 
+    # Determine provider for RCA
+    provider = getattr(args, "provider", "anthropic") or "anthropic"
+    base_url = getattr(args, "base_url", None)
+
+    from cane_eval.providers import PROVIDERS as _P, PROVIDER_ALIASES as _PA
+    _resolved = _PA.get(provider.lower(), provider.lower())
+    _pcls = _P.get(_resolved)
+    _env_key = _pcls.env_key() if _pcls else "ANTHROPIC_API_KEY"
+
     # Now run RCA
     analyzer = RootCauseAnalyzer(
-        api_key=args.api_key or os.environ.get("ANTHROPIC_API_KEY"),
+        api_key=args.api_key or os.environ.get(_env_key),
         model=args.model or suite.model,
         verbose=not args.quiet,
+        provider=provider,
+        base_url=base_url,
     )
 
     print(f"  {c('Running root cause analysis...', 'cyan')}")
@@ -523,6 +559,45 @@ def cmd_rca(args):
     sys.exit(0)
 
 
+def cmd_demo(args):
+    """Run built-in demo."""
+    from cane_eval.demo import run_demo
+    run_demo(with_rca=args.with_rca, verbose=True)
+
+
+def cmd_preflight(args):
+    """Run pre-flight checks on a test suite."""
+    from cane_eval.suite import TestSuite
+    from cane_eval.engine import EvalRunner
+
+    try:
+        suite = TestSuite.from_yaml(args.suite)
+    except FileNotFoundError:
+        print(c(f"  Error: Suite file not found: {args.suite}", "red"))
+        sys.exit(1)
+    except Exception as e:
+        print(c(f"  Error loading suite: {e}", "red"))
+        sys.exit(1)
+
+    print()
+    print(f"  {c('cane-eval preflight', 'cyan')} {c(suite.name, 'bold')}")
+    print()
+
+    result = EvalRunner.preflight(suite, timeout=args.timeout, verbose=True)
+    print()
+
+    if result["ok"]:
+        print(f"  {c('All checks passed. Ready to run.', 'green')}")
+    else:
+        err_count = len(result["errors"])
+        print(f"  {c(f'{err_count} issue(s) found:', 'red')}")
+        for err in result["errors"]:
+            print(f"    {c('>', 'red')} {err}")
+
+    print()
+    sys.exit(0 if result["ok"] else 1)
+
+
 def cmd_validate(args):
     """Validate a test suite YAML file."""
     from cane_eval.suite import TestSuite
@@ -547,7 +622,7 @@ def main():
         prog="cane-eval",
         description="LLM-as-Judge evaluation for AI agents",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.1.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 0.3.0")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
@@ -567,6 +642,8 @@ def main():
     run_parser.add_argument("--mine-output", help="Mining export path")
     run_parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
     run_parser.add_argument("--fail-on-warn", action="store_true", help="Exit 1 on warnings too")
+    run_parser.add_argument("--provider", default="anthropic", help="Judge provider: anthropic, openai, gemini, openai-compatible (default: anthropic)")
+    run_parser.add_argument("--base-url", help="Base URL for OpenAI-compatible endpoints (e.g. http://localhost:11434/v1)")
 
     # diff
     diff_parser = subparsers.add_parser("diff", help="Compare two eval runs (regression diff)")
@@ -586,10 +663,21 @@ def main():
     rca_parser.add_argument("--targeted-max", type=int, default=5, help="Max results for targeted analysis (default: 5)")
     rca_parser.add_argument("--output", help="Save RCA results as JSON")
     rca_parser.add_argument("--quiet", "-q", action="store_true", help="Minimal output")
+    rca_parser.add_argument("--provider", default="anthropic", help="Judge provider: anthropic, openai, gemini, openai-compatible")
+    rca_parser.add_argument("--base-url", help="Base URL for OpenAI-compatible endpoints")
 
     # validate
     validate_parser = subparsers.add_parser("validate", help="Validate a test suite YAML")
     validate_parser.add_argument("suite", help="Path to YAML test suite")
+
+    # demo
+    demo_parser = subparsers.add_parser("demo", help="Run built-in demo (no setup required)")
+    demo_parser.add_argument("--with-rca", action="store_true", help="Include root cause analysis")
+
+    # preflight
+    preflight_parser = subparsers.add_parser("preflight", help="Check agent endpoints before running eval")
+    preflight_parser.add_argument("suite", help="Path to YAML test suite")
+    preflight_parser.add_argument("--timeout", type=int, default=5, help="Timeout per check in seconds (default: 5)")
 
     args = parser.parse_args()
 
@@ -601,6 +689,10 @@ def main():
         cmd_rca(args)
     elif args.command == "validate":
         cmd_validate(args)
+    elif args.command == "demo":
+        cmd_demo(args)
+    elif args.command == "preflight":
+        cmd_preflight(args)
     else:
         parser.print_help()
         sys.exit(0)

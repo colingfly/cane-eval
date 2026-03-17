@@ -1,15 +1,14 @@
 """
 judge.py -- LLM-as-Judge scoring engine.
 
-Uses Claude (or any Anthropic model) as an impartial judge to score
-agent responses against expected answers across weighted criteria.
+Uses any supported LLM provider (Anthropic, OpenAI, Gemini, or OpenAI-compatible)
+as an impartial judge to score agent responses against expected answers
+across weighted criteria.
 """
 
 import json
 from dataclasses import dataclass, field
 from typing import Optional
-
-import anthropic
 
 
 # ---- Data classes ----
@@ -67,10 +66,22 @@ class Judge:
     """
     LLM-as-Judge evaluator.
 
-    Uses Claude to score agent responses against expected answers.
+    Uses any supported LLM provider to score agent responses against expected answers.
 
     Usage:
+        # Anthropic (default)
         judge = Judge(api_key="sk-ant-...")
+
+        # OpenAI
+        judge = Judge(provider="openai", model="gpt-4o")
+
+        # Gemini
+        judge = Judge(provider="gemini", model="gemini-2.0-flash")
+
+        # Ollama (local, free)
+        judge = Judge(provider="openai-compatible", model="llama3",
+                      base_url="http://localhost:11434/v1")
+
         result = judge.score(
             question="What is the return policy?",
             expected_answer="30-day returns for unused items",
@@ -86,22 +97,34 @@ class Judge:
         model: str = "claude-sonnet-4-5-20250929",
         temperature: float = 0.2,
         max_tokens: int = 1024,
+        provider: str = "anthropic",
+        base_url: Optional[str] = None,
     ):
-        self.model = model
+        from cane_eval.providers import get_provider, detect_provider_from_model
+
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self._client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+
+        # Auto-detect provider from model name if not explicitly set
+        if provider == "anthropic" and not model.startswith("claude"):
+            provider = detect_provider_from_model(model)
+
+        self._provider = get_provider(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        self.model = self._provider.model
 
     def _call(self, prompt: str, system: str = "", max_tokens: int = None) -> str:
-        """Call Claude and return text response."""
-        response = self._client.messages.create(
-            model=self.model,
+        """Call the LLM provider and return text response."""
+        return self._provider.call(
+            prompt=prompt,
+            system=system or JUDGE_SYSTEM,
             max_tokens=max_tokens or self.max_tokens,
             temperature=self.temperature,
-            system=system or JUDGE_SYSTEM,
-            messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text
 
     def _build_prompt(
         self,

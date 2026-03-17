@@ -13,8 +13,6 @@ import json
 from dataclasses import dataclass, field
 from typing import Optional
 
-import anthropic
-
 from cane_eval.engine import RunSummary, EvalResult
 
 
@@ -148,21 +146,32 @@ class FailureMiner:
         api_key: Optional[str] = None,
         model: str = "claude-sonnet-4-5-20250929",
         verbose: bool = True,
+        provider: str = "anthropic",
+        base_url: Optional[str] = None,
     ):
-        self.model = model
+        from cane_eval.providers import get_provider, detect_provider_from_model
+
         self.verbose = verbose
-        self._client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
+
+        if provider == "anthropic" and not model.startswith("claude"):
+            provider = detect_provider_from_model(model)
+
+        self._provider = get_provider(
+            provider=provider,
+            model=model,
+            api_key=api_key,
+            base_url=base_url,
+        )
+        self.model = self._provider.model
 
     def _call(self, prompt: str, system: str, max_tokens: int = 1024) -> str:
-        """Call Claude and return text."""
-        response = self._client.messages.create(
-            model=self.model,
+        """Call the LLM provider and return text."""
+        return self._provider.call(
+            prompt=prompt,
+            system=system,
             max_tokens=max_tokens,
             temperature=0.2,
-            system=system,
-            messages=[{"role": "user", "content": prompt}],
         )
-        return response.content[0].text
 
     def classify_failure(self, judge_reasoning: str) -> str:
         """Classify a failure into one of the standard failure types."""

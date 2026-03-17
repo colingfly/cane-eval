@@ -5,8 +5,9 @@ Open-source eval toolkit: YAML test suites, Claude-powered judging,
 regression diffs, failure mining, root cause analysis, and training data export.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.3.0"
 
+from cane_eval.providers import get_provider, AnthropicProvider, OpenAIProvider, GeminiProvider, OpenAICompatibleProvider
 from cane_eval.suite import TestSuite, TestCase
 from cane_eval.judge import Judge, JudgeResult, CriteriaScore
 from cane_eval.engine import EvalRunner, EvalResult, RunSummary
@@ -23,6 +24,13 @@ from cane_eval.integrations import (
 )
 
 __all__ = [
+    # Providers
+    "get_provider",
+    "AnthropicProvider",
+    "OpenAIProvider",
+    "GeminiProvider",
+    "OpenAICompatibleProvider",
+    # Core
     "TestSuite",
     "TestCase",
     "Judge",
