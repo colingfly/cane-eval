@@ -2,11 +2,49 @@
 
 LLM-as-Judge evaluation for AI agents. Define test suites in YAML, score responses with Claude, analyze failure root causes, and mine failures into training data.
 
+[![PyPI](https://img.shields.io/pypi/v/cane-eval)](https://pypi.org/project/cane-eval/)
 [![Open in Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/colingfly/cane-eval/blob/main/examples/quickstart.ipynb)
 
 ```
 pip install cane-eval
 ```
+
+## See It in Action
+
+Run the built-in demo to see what `cane-eval` catches on a deliberately flawed agent:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+cane-eval demo
+```
+
+```
+  cane-eval demo
+  Running a deliberately flawed support agent against 5 test cases...
+
+  Pre-flight checks
+  [OK] callable target (no remote dependency)
+  [OK] ANTHROPIC_API_KEY is set
+  Pre-flight: all checks passed
+
+  Evaluating...
+   FAIL  52  What is your return policy?
+         The response is accurate but severely lacks completeness,
+         missing all specific policy details customers need.
+   FAIL   0  How do I reset my password?
+         The response is entirely fabricated and contradicts the
+         expected self-service password reset process.
+   WARN  66  Do you offer international shipping?
+   FAIL  16  What payment methods do you accept?
+         The response provides only partial info while fabricating
+         a competitor recommendation with false cashback claims.
+   PASS 100  How do I contact customer support?
+
+  Overall: 47/100  (28.4s)
+  1 passed  1 warned  3 failed
+```
+
+Three failures caught in 28 seconds: missing details, fabricated processes, and hallucinated competitors. That's what your agents are doing without evals.
 
 ## Quick Start
 
