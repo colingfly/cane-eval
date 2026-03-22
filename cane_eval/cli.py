@@ -7,6 +7,7 @@ Usage:
     cane-eval run tests.yaml --tags policy,returns
     cane-eval run tests.yaml --export dpo --output training.jsonl
     cane-eval run tests.yaml --mine --mine-threshold 60
+    cane-eval run tests.yaml -j 5 --reliability-weights 60:20:20
     cane-eval diff results_v1.json results_v2.json
 """
 
@@ -348,15 +349,38 @@ def print_targeted_rca_result(targeted):
 
 # ---- Commands ----
 
+def _parse_reliability_weights(weights_str: str):
+    """Parse reliability weights from 'C:S:P' format (e.g. '60:20:20')."""
+    from cane_eval.reliability import ReliabilityConfig
+
+    parts = weights_str.split(":")
+    if len(parts) != 3:
+        raise argparse.ArgumentTypeError(
+            f"Invalid weights format '{weights_str}'. Expected C:S:P (e.g. 60:20:20)"
+        )
+    try:
+        c_w, s_w, p_w = [int(p) for p in parts]
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"Invalid weights format '{weights_str}'. Values must be integers."
+        )
+    total = c_w + s_w + p_w
+    return ReliabilityConfig(
+        correctness_weight=c_w / total,
+        structural_weight=s_w / total,
+        performance_weight=p_w / total,
+    )
+
+
 def cmd_run(args):
     """Run eval suite."""
-    from cane_eval.suite import TestSuite
-    from cane_eval.engine import EvalRunner
+    from cane_eval.suite import ReliabilitySuite
+    from cane_eval.engine import ReliabilityRunner
     from cane_eval.export import Exporter
 
     # Load suite
     try:
-        suite = TestSuite.from_yaml(args.suite)
+        suite = ReliabilitySuite.from_yaml(args.suite)
     except FileNotFoundError:
         print(c(f"  Error: Suite file not found: {args.suite}", "red"))
         sys.exit(1)
@@ -403,8 +427,18 @@ def cmd_run(args):
     if schema is None and hasattr(suite, 'schema') and suite.schema:
         schema = suite.schema
 
+    # Parse reliability weights
+    reliability_config = None
+    if args.reliability_weights:
+        reliability_config = _parse_reliability_weights(args.reliability_weights)
+    elif suite.reliability_config:
+        reliability_config = suite.get_reliability_config()
+
+    # Determine concurrency
+    concurrency = args.concurrency if args.concurrency else suite.concurrency
+
     # Run
-    runner = EvalRunner(
+    runner = ReliabilityRunner(
         api_key=args.api_key or os.environ.get(env_key),
         model=args.model,
         verbose=not args.quiet,
@@ -414,6 +448,8 @@ def cmd_run(args):
         schema=schema,
         latency_p95=args.latency_p95,
         latency_target=args.latency_target,
+        concurrency=concurrency,
+        reliability_config=reliability_config,
     )
 
     summary = runner.run(suite, tags=tags)
@@ -499,13 +535,13 @@ def cmd_diff(args):
 
 def cmd_rca(args):
     """Run root cause analysis on eval failures."""
-    from cane_eval.suite import TestSuite
-    from cane_eval.engine import EvalRunner
+    from cane_eval.suite import ReliabilitySuite
+    from cane_eval.engine import ReliabilityRunner
     from cane_eval.rca import RootCauseAnalyzer
 
     # Load suite
     try:
-        suite = TestSuite.from_yaml(args.suite)
+        suite = ReliabilitySuite.from_yaml(args.suite)
     except FileNotFoundError:
         print(c(f"  Error: Suite file not found: {args.suite}", "red"))
         sys.exit(1)
@@ -534,7 +570,7 @@ def cmd_rca(args):
             print(c(f"  Error: Results file not found: {args.results}", "red"))
             sys.exit(1)
 
-        from cane_eval.engine import EvalResult as ER
+        from cane_eval.engine import ReliabilityResult
         from cane_eval.judge import JudgeResult, CriteriaScore
 
         results_list = data.get("results", data if isinstance(data, list) else [])
@@ -542,14 +578,14 @@ def cmd_rca(args):
         for r in results_list:
             criteria_scores = []
             for name, score_val in (r.get("criteria_scores") or {}).items():
-                criteria_scores.append(CriteriaScore(name=name, score=float(score_val), reasoning=""))
+                criteria_scores.append(CriteriaScore(key=name, score=float(score_val), reasoning=""))
             jr = JudgeResult(
                 overall_score=r.get("overall_score", 0),
                 overall_reasoning=r.get("judge_reasoning", ""),
                 status=r.get("status", "fail"),
                 criteria_scores=criteria_scores,
             )
-            eval_results.append(ER(
+            eval_results.append(ReliabilityResult(
                 question=r.get("question", ""),
                 expected_answer=r.get("expected_answer", ""),
                 agent_answer=r.get("agent_answer", ""),
@@ -557,8 +593,8 @@ def cmd_rca(args):
                 tags=r.get("tags", []),
             ))
 
-        from cane_eval.engine import RunSummary
-        summary = RunSummary(
+        from cane_eval.engine import ReliabilitySummary
+        summary = ReliabilitySummary(
             suite_name=data.get("suite_name", "loaded"),
             total=len(eval_results),
             results=eval_results,
@@ -577,7 +613,7 @@ def cmd_rca(args):
         provider_cls = PROVIDERS.get(resolved)
         env_key = provider_cls.env_key() if provider_cls else "ANTHROPIC_API_KEY"
 
-        runner = EvalRunner(
+        runner = ReliabilityRunner(
             api_key=args.api_key or os.environ.get(env_key),
             model=args.model,
             verbose=not args.quiet,
@@ -657,11 +693,11 @@ def cmd_demo(args):
 
 def cmd_preflight(args):
     """Run pre-flight checks on a test suite."""
-    from cane_eval.suite import TestSuite
-    from cane_eval.engine import EvalRunner
+    from cane_eval.suite import ReliabilitySuite
+    from cane_eval.engine import ReliabilityRunner
 
     try:
-        suite = TestSuite.from_yaml(args.suite)
+        suite = ReliabilitySuite.from_yaml(args.suite)
     except FileNotFoundError:
         print(c(f"  Error: Suite file not found: {args.suite}", "red"))
         sys.exit(1)
@@ -673,7 +709,7 @@ def cmd_preflight(args):
     print(f"  {c('cane-eval preflight', 'cyan')} {c(suite.name, 'bold')}")
     print()
 
-    result = EvalRunner.preflight(suite, timeout=args.timeout, verbose=True)
+    result = ReliabilityRunner.preflight(suite, timeout=args.timeout, verbose=True)
     print()
 
     if result["ok"]:
@@ -690,10 +726,10 @@ def cmd_preflight(args):
 
 def cmd_validate(args):
     """Validate a test suite YAML file."""
-    from cane_eval.suite import TestSuite
+    from cane_eval.suite import ReliabilitySuite
 
     try:
-        suite = TestSuite.from_yaml(args.suite)
+        suite = ReliabilitySuite.from_yaml(args.suite)
         print(f"  {c('Valid', 'green')} {suite.name}")
         print(f"  {len(suite.tests)} test cases, {len(suite.criteria)} criteria")
         if suite.custom_rules:
@@ -710,14 +746,14 @@ def cmd_validate(args):
 def main():
     parser = argparse.ArgumentParser(
         prog="cane-eval",
-        description="LLM-as-Judge evaluation for AI agents",
+        description="AI system reliability infrastructure",
     )
-    parser.add_argument("--version", action="version", version="%(prog)s 0.4.0")
+    parser.add_argument("--version", action="version", version="%(prog)s 1.0.0")
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # run
-    run_parser = subparsers.add_parser("run", help="Run an eval suite")
+    run_parser = subparsers.add_parser("run", help="Run a reliability eval suite")
     run_parser.add_argument("suite", help="Path to YAML test suite")
     run_parser.add_argument("--model", help="Override judge model")
     run_parser.add_argument("--api-key", help="Anthropic API key (or set ANTHROPIC_API_KEY)")
@@ -738,6 +774,8 @@ def main():
     run_parser.add_argument("--latency-p95", type=int, help="Fail if p95 latency exceeds this threshold (ms)")
     run_parser.add_argument("--latency-target", type=int, default=5000, help="Target latency for reliability scoring in ms (default: 5000)")
     run_parser.add_argument("--fail-on-schema", action="store_true", help="Exit 1 if any response fails schema validation")
+    run_parser.add_argument("--concurrency", "-j", type=int, default=0, help="Number of parallel test executions (default: 1, or from suite YAML)")
+    run_parser.add_argument("--reliability-weights", help="Reliability weights as C:S:P (e.g. 60:20:20 for correctness:structural:performance)")
 
     # diff
     diff_parser = subparsers.add_parser("diff", help="Compare two eval runs (regression diff)")

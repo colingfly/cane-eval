@@ -18,14 +18,19 @@ from cane_eval.engine import RunSummary, EvalResult
 
 # ---- Failure types ----
 
-FAILURE_TYPES = [
+FAILURE_TYPES = {
     "hallucination",
     "incomplete",
     "off_topic",
     "wrong_format",
     "factual_error",
     "other",
-]
+}
+
+
+def register_failure_type(name: str) -> None:
+    """Register a custom failure type for domain-specific failure classification."""
+    FAILURE_TYPES.add(name)
 
 
 # ---- Data classes ----

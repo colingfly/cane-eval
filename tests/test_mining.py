@@ -12,7 +12,7 @@ def test_failure_types():
     assert "wrong_format" in FAILURE_TYPES
     assert "factual_error" in FAILURE_TYPES
     assert "other" in FAILURE_TYPES
-    assert len(FAILURE_TYPES) == 6
+    assert len(FAILURE_TYPES) >= 6
 
 
 def test_mined_example_to_dpo():

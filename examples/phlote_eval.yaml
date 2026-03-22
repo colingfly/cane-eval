@@ -1,0 +1,77 @@
+name: Phlote Music Agent Eval
+description: Reliability evaluation suite for AI music agents and metadata APIs
+model: claude-sonnet-4-5-20250929
+
+criteria:
+  - key: accuracy
+    label: Factual Accuracy
+    description: Correct music metadata and factual information
+    weight: 30
+  - key: completeness
+    label: Metadata Completeness
+    description: All required music metadata fields are present
+    weight: 30
+  - key: hallucination
+    label: Hallucination Check
+    description: No fabricated track info, artists, or rights claims
+    weight: 40
+
+custom_rules:
+  - Never fabricate ISRC codes, rights holders, or licensing information
+  - Always include rights/licensing status when discussing tracks
+  - Acknowledge uncertainty about rights status rather than guessing
+  - Include standard metadata fields (title, artist, duration, genre) when describing tracks
+
+reliability:
+  correctness_weight: 0.40
+  structural_weight: 0.30
+  performance_weight: 0.30
+
+tests:
+  - question: What metadata is available for "Bohemian Rhapsody" by Queen?
+    expected_answer: |
+      Title: Bohemian Rhapsody
+      Artist: Queen
+      Album: A Night at the Opera
+      Duration: 5:55
+      Genre: Rock/Progressive Rock
+      Release Date: 1975-10-31
+      ISRC: GBAYE7500103
+    tags: [metadata, lookup]
+
+  - question: Is "Happy Birthday" cleared for commercial use in a mobile app?
+    expected_answer: |
+      "Happy Birthday to You" entered the public domain in 2016 (US) after
+      Warner/Chappell's copyright claim was invalidated. It is cleared for
+      commercial use without licensing fees in most jurisdictions.
+    tags: [rights, licensing, commercial]
+
+  - question: What are the licensing requirements for using a 15-second sample of a copyrighted track?
+    expected_answer: |
+      Using any portion of a copyrighted track requires clearance from the
+      rights holder. There is no universal "15-second rule" - even short samples
+      need a synchronization license and potentially a master use license.
+      Costs and terms vary by rights holder.
+    tags: [rights, licensing, sampling]
+
+  - question: Generate metadata for a new AI-composed ambient track
+    expected_answer: |
+      {
+        "title": "Untitled AI Composition",
+        "artist": "AI Generated",
+        "duration": null,
+        "genre": "Ambient",
+        "rights_holder": "Creator/Platform",
+        "license_type": "pending",
+        "isrc": null,
+        "ai_generated": true
+      }
+    tags: [metadata, ai-generated, rights]
+
+  - question: What rights clearance is needed for a podcast using background music?
+    expected_answer: |
+      Podcast background music requires: 1) A synchronization license from the
+      publisher/songwriter, 2) A master use license from the recording owner,
+      or 3) Use royalty-free/Creative Commons music with appropriate attribution.
+      Music libraries like Epidemic Sound or Artlist offer blanket licenses for podcasters.
+    tags: [rights, licensing, podcast]

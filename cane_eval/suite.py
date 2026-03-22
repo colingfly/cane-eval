@@ -6,6 +6,7 @@ Loads test cases from YAML files. Each suite defines:
 - Judge criteria with weights
 - Custom rules
 - Test cases with questions and expected answers
+- Optional reliability weight configuration
 """
 
 import yaml
@@ -15,7 +16,7 @@ from typing import Optional
 
 
 @dataclass
-class TestCase:
+class ReliabilityCase:
     """A single eval test case."""
     question: str
     expected_answer: Optional[str] = None
@@ -25,7 +26,11 @@ class TestCase:
 
     def __repr__(self):
         q = self.question[:50] + "..." if len(self.question) > 50 else self.question
-        return f"TestCase({q!r})"
+        return f"ReliabilityCase({q!r})"
+
+
+# Deprecated alias
+TestCase = ReliabilityCase
 
 
 @dataclass
@@ -77,7 +82,7 @@ DEFAULT_CRITERIA = [
 ]
 
 
-class TestSuite:
+class ReliabilitySuite:
     """
     A collection of test cases loaded from YAML.
 
@@ -106,6 +111,13 @@ class TestSuite:
         label: Hallucination Check
         weight: 30
 
+    reliability:
+      correctness_weight: 0.60
+      structural_weight: 0.20
+      performance_weight: 0.20
+
+    concurrency: 5
+
     custom_rules:
       - Never recommend competitors
       - Always cite the source document
@@ -129,9 +141,11 @@ class TestSuite:
         target: Optional[AgentTarget] = None,
         criteria: Optional[list[Criterion]] = None,
         custom_rules: Optional[list[str]] = None,
-        tests: Optional[list[TestCase]] = None,
+        tests: Optional[list[ReliabilityCase]] = None,
         schema: Optional[dict] = None,
         latency_target_ms: Optional[int] = None,
+        reliability_config: Optional[dict] = None,
+        concurrency: int = 1,
     ):
         self.name = name
         self.description = description
@@ -142,9 +156,11 @@ class TestSuite:
         self.tests = tests or []
         self.schema = schema
         self.latency_target_ms = latency_target_ms
+        self.reliability_config = reliability_config
+        self.concurrency = concurrency
 
     @classmethod
-    def from_yaml(cls, path: str | Path) -> "TestSuite":
+    def from_yaml(cls, path: str | Path) -> "ReliabilitySuite":
         """Load a test suite from a YAML file."""
         path = Path(path)
         if not path.exists():
@@ -177,10 +193,16 @@ class TestSuite:
         # Parse custom rules
         custom_rules = data.get("custom_rules", [])
 
+        # Parse reliability config
+        reliability_config = data.get("reliability")
+
+        # Parse concurrency
+        concurrency = data.get("concurrency", 1)
+
         # Parse test cases
         tests = []
         for t in data.get("tests", []):
-            tests.append(TestCase(
+            tests.append(ReliabilityCase(
                 question=t["question"],
                 expected_answer=t.get("expected_answer"),
                 tags=t.get("tags", []),
@@ -198,10 +220,12 @@ class TestSuite:
             tests=tests,
             schema=data.get("schema"),
             latency_target_ms=data.get("latency_target_ms"),
+            reliability_config=reliability_config,
+            concurrency=concurrency,
         )
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TestSuite":
+    def from_dict(cls, data: dict) -> "ReliabilitySuite":
         """Create a suite from a dictionary (useful for programmatic creation)."""
         target = None
         if "target" in data:
@@ -220,7 +244,7 @@ class TestSuite:
             ]
 
         tests = [
-            TestCase(
+            ReliabilityCase(
                 question=t["question"],
                 expected_answer=t.get("expected_answer"),
                 tags=t.get("tags", []),
@@ -239,19 +263,36 @@ class TestSuite:
             tests=tests,
             schema=data.get("schema"),
             latency_target_ms=data.get("latency_target_ms"),
+            reliability_config=data.get("reliability"),
+            concurrency=data.get("concurrency", 1),
         )
 
     def criteria_dicts(self) -> list[dict]:
         """Return criteria as list of dicts for judge consumption."""
         return [c.to_dict() for c in self.criteria]
 
-    def filter_by_tags(self, tags: list[str]) -> list[TestCase]:
+    def filter_by_tags(self, tags: list[str]) -> list[ReliabilityCase]:
         """Return test cases matching any of the given tags."""
         tag_set = set(tags)
         return [t for t in self.tests if tag_set & set(t.tags)]
+
+    def get_reliability_config(self):
+        """Parse reliability config dict into ReliabilityConfig, or None."""
+        if not self.reliability_config:
+            return None
+        from cane_eval.reliability import ReliabilityConfig
+        return ReliabilityConfig(
+            correctness_weight=self.reliability_config.get("correctness_weight", 0.50),
+            structural_weight=self.reliability_config.get("structural_weight", 0.25),
+            performance_weight=self.reliability_config.get("performance_weight", 0.25),
+        )
 
     def __len__(self):
         return len(self.tests)
 
     def __repr__(self):
-        return f"TestSuite({self.name!r}, {len(self.tests)} tests)"
+        return f"ReliabilitySuite({self.name!r}, {len(self.tests)} tests)"
+
+
+# Deprecated alias
+TestSuite = ReliabilitySuite

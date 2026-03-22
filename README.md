@@ -1,6 +1,6 @@
 # cane-eval
 
-The agent reliability layer. Catch what breaks in production before it ships.
+AI system reliability infrastructure. Evaluate any AI system's reliability across correctness, structure, and performance.
 
 [![PyPI](https://img.shields.io/pypi/v/cane-eval)](https://pypi.org/project/cane-eval/)
 
@@ -10,7 +10,7 @@ pip install cane-eval
 
 ## What it does
 
-LLM-as-Judge eval + schema validation + latency tracking + reliability scoring. One tool, one score, one answer: **would this break in production?**
+Extensible reliability evaluation for AI systems — not just LLMs, but any AI agent, API, or pipeline. One tool, one score, one answer: **would this break in production?**
 
 ```
   Support Agent                              28.4s
@@ -59,6 +59,15 @@ schema:
 # Optional: latency target for reliability scoring
 latency_target_ms: 5000
 
+# Optional: configure reliability weights
+reliability:
+  correctness_weight: 0.60
+  structural_weight: 0.20
+  performance_weight: 0.20
+
+# Optional: parallel execution
+concurrency: 5
+
 tests:
   - question: What is the return policy?
     expected_answer: 30-day return policy for unused items with receipt
@@ -75,14 +84,20 @@ cane-eval run tests.yaml
 **3. Production checks**:
 
 ```bash
+# Parallel execution
+cane-eval run tests.yaml -j 5
+
+# Custom reliability weights (correctness:structural:performance)
+cane-eval run tests.yaml --reliability-weights 60:20:20
+
 # Validate responses against JSON schema
 cane-eval run tests.yaml --schema schema.json --fail-on-schema
 
 # Fail if p95 latency exceeds 10 seconds
 cane-eval run tests.yaml --latency-p95 10000
 
-# Both + mine failures into training data
-cane-eval run tests.yaml --schema schema.json --latency-p95 10000 --mine --export dpo
+# All together + mine failures into training data
+cane-eval run tests.yaml -j 5 --schema schema.json --latency-p95 10000 --mine --export dpo
 ```
 
 ## Reliability Score
@@ -96,6 +111,38 @@ Every eval run produces an Agent Reliability Score (0-100) across three pillars:
 | **Performance** | Is it fast enough for production? | p95 latency vs target |
 
 Grades: **A** (90+) production-ready, **B** (75+) mostly reliable, **C** (60+) needs work, **D** (40+) significant gaps, **F** (<40) not ready.
+
+Weights are configurable per-suite or via CLI:
+
+```yaml
+reliability:
+  correctness_weight: 0.60
+  structural_weight: 0.20
+  performance_weight: 0.20
+```
+
+## Extensible Criteria
+
+Build custom evaluation criteria for any domain:
+
+```python
+from cane_eval import CriterionPlugin, CriterionType, EvalContext, CriteriaRegistry
+
+class ResponseTimeCriterion(CriterionPlugin):
+    name = "response_time"
+    criterion_type = CriterionType.DETERMINISTIC
+    description = "Response under 2 seconds"
+
+    def score(self, ctx: EvalContext) -> float:
+        if ctx.response_time_ms <= 2000:
+            return 100.0
+        return max(0, 100 - (ctx.response_time_ms - 2000) / 20)
+
+registry = CriteriaRegistry()
+registry.register(ResponseTimeCriterion())
+```
+
+Built-in criteria: `SchemaValidityCriterion`, `LatencyPerformanceCriterion`, `AccuracyCriterion`, `CompletenessCriterion`, `HallucinationCriterion`.
 
 ## Multi-Model Judging
 
@@ -118,6 +165,8 @@ pip install cane-eval[all-providers]   # everything
 
 ```bash
 cane-eval run tests.yaml                          # run eval
+cane-eval run tests.yaml -j 5                     # parallel (5 concurrent)
+cane-eval run tests.yaml --reliability-weights 60:20:20  # custom weights
 cane-eval run tests.yaml --schema schema.json     # + schema validation
 cane-eval run tests.yaml --latency-p95 10000      # + latency threshold
 cane-eval run tests.yaml --mine --export dpo      # + failure mining
@@ -129,12 +178,18 @@ cane-eval demo                                    # try it in 30 seconds
 ## Python API
 
 ```python
-from cane_eval import TestSuite, EvalRunner
+from cane_eval import ReliabilitySuite, ReliabilityRunner, ReliabilityConfig
 
-suite = TestSuite.from_yaml("tests.yaml")
-runner = EvalRunner(
+suite = ReliabilitySuite.from_yaml("tests.yaml")
+runner = ReliabilityRunner(
     schema={"type": "object", "required": ["answer"]},
     latency_p95=10000,
+    concurrency=5,
+    reliability_config=ReliabilityConfig(
+        correctness_weight=0.60,
+        structural_weight=0.20,
+        performance_weight=0.20,
+    ),
 )
 summary = runner.run(suite, agent=lambda q: my_agent.ask(q))
 
@@ -144,15 +199,34 @@ print(f"Latency p95: {summary.latency.p95_ms}ms")
 print(f"Schema: {summary.schema_pass}/{summary.schema_pass + summary.schema_fail} valid")
 ```
 
+Old names (`EvalRunner`, `TestSuite`, `TestCase`, `EvalResult`, `RunSummary`) still work as aliases.
+
 ## Framework Integrations
 
 ```python
-from cane_eval import evaluate_langchain, evaluate_llamaindex, evaluate_openai, evaluate_fastapi
+from cane_eval import evaluate_langchain, evaluate_llamaindex, evaluate_openai, evaluate_fastapi, evaluate_phlote
 
 results = evaluate_langchain(chain, suite="qa.yaml")
 results = evaluate_llamaindex(query_engine, suite="qa.yaml")
 results = evaluate_openai("http://localhost:11434/v1/chat/completions", suite="qa.yaml")
 results = evaluate_fastapi("http://localhost:8000/ask", suite="qa.yaml")
+results = evaluate_phlote(music_agent, suite="music_eval.yaml")  # Phlote.xyz music infrastructure
+```
+
+## Phlote Integration
+
+Domain-specific reliability evaluation for AI music systems:
+
+```python
+from cane_eval.integrations.phlote import evaluate_phlote, phlote_registry
+
+# Evaluate a music agent with domain criteria
+results = evaluate_phlote(music_agent, suite="music_eval.yaml")
+
+# Access Phlote-specific criteria
+registry = phlote_registry()
+# Includes: RightsClearanceCriterion, MetadataCompletenessCriterion,
+#           LicensingValidityCriterion, ContextualRelevanceCriterion
 ```
 
 ## Eval Targets
@@ -176,7 +250,7 @@ target:
 ```yaml
 # .github/workflows/eval.yml
 - run: pip install cane-eval
-- run: cane-eval run tests.yaml --schema schema.json --latency-p95 10000 --quiet
+- run: cane-eval run tests.yaml -j 5 --schema schema.json --latency-p95 10000 --quiet
   env:
     ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
 ```

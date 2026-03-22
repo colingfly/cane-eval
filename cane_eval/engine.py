@@ -1,10 +1,11 @@
 """
-engine.py -- Eval runner.
+engine.py -- Reliability runner.
 
 Orchestrates running a test suite against an agent target,
 collecting judge scores, and producing a run summary.
 """
 
+import asyncio
 import json
 import time
 import subprocess
@@ -13,12 +14,13 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Optional, Callable, Generator
 
-from cane_eval.suite import TestSuite, TestCase, AgentTarget
+from cane_eval.suite import ReliabilitySuite, ReliabilityCase, AgentTarget
 from cane_eval.judge import Judge, JudgeResult
+from cane_eval.reliability import ReliabilityConfig, compute_reliability
 
 
 @dataclass
-class EvalResult:
+class ReliabilityResult:
     """Result for a single test case."""
     question: str
     expected_answer: str
@@ -28,7 +30,7 @@ class EvalResult:
     response_time_ms: int = 0
     tags: list[str] = field(default_factory=list)
     context: Optional[str] = None
-    schema_result: Optional[SchemaResult] = None
+    schema_result: Optional["SchemaResult"] = None
 
     @property
     def score(self) -> float:
@@ -55,6 +57,10 @@ class EvalResult:
         return d
 
 
+# Deprecated alias
+EvalResult = ReliabilityResult
+
+
 @dataclass
 class LatencyStats:
     """Latency statistics for an eval run."""
@@ -67,7 +73,7 @@ class LatencyStats:
 
     @classmethod
     def from_results(cls, results: list) -> "LatencyStats":
-        """Compute latency stats from a list of EvalResults."""
+        """Compute latency stats from a list of results."""
         times = sorted(r.response_time_ms for r in results if r.response_time_ms > 0)
         if not times:
             return cls()
@@ -108,7 +114,7 @@ class SchemaResult:
 
 
 @dataclass
-class RunSummary:
+class ReliabilitySummary:
     """Summary of a complete eval run."""
     suite_name: str
     total: int = 0
@@ -116,7 +122,7 @@ class RunSummary:
     warned: int = 0
     failed: int = 0
     overall_score: float = 0.0
-    results: list[EvalResult] = field(default_factory=list)
+    results: list[ReliabilityResult] = field(default_factory=list)
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     duration_seconds: float = 0.0
@@ -130,15 +136,15 @@ class RunSummary:
     def pass_rate(self) -> float:
         return (self.passed / self.total * 100) if self.total else 0.0
 
-    def failures(self) -> list[EvalResult]:
+    def failures(self) -> list[ReliabilityResult]:
         """Return only failing results."""
         return [r for r in self.results if r.status == "fail"]
 
-    def warnings(self) -> list[EvalResult]:
+    def warnings(self) -> list[ReliabilityResult]:
         """Return only warning results."""
         return [r for r in self.results if r.status == "warn"]
 
-    def by_tag(self, tag: str) -> list[EvalResult]:
+    def by_tag(self, tag: str) -> list[ReliabilityResult]:
         """Return results matching a specific tag."""
         return [r for r in self.results if tag in r.tags]
 
@@ -165,6 +171,10 @@ class RunSummary:
             d["reliability_score"] = self.reliability_score
             d["reliability_grade"] = self.reliability_grade
         return d
+
+
+# Deprecated aliases
+RunSummary = ReliabilitySummary
 
 
 # ---- Agent callers ----
@@ -253,13 +263,13 @@ def _call_command_agent(question: str, target: AgentTarget) -> dict:
 
 # ---- Runner ----
 
-class EvalRunner:
+class ReliabilityRunner:
     """
     Run a test suite against an agent and collect judge scores.
 
     Usage:
-        suite = TestSuite.from_yaml("tests.yaml")
-        runner = EvalRunner(api_key="sk-ant-...")
+        suite = ReliabilitySuite.from_yaml("tests.yaml")
+        runner = ReliabilityRunner(api_key="sk-ant-...")
 
         # Option 1: Agent callable
         summary = runner.run(suite, agent=lambda q: my_agent(q))
@@ -267,8 +277,8 @@ class EvalRunner:
         # Option 2: HTTP target defined in YAML
         summary = runner.run(suite)
 
-        # Option 3: CLI command target
-        summary = runner.run(suite)
+        # Option 3: Parallel execution
+        summary = runner.run(suite, agent=my_agent)  # concurrency=5
 
         print(f"Score: {summary.overall_score} | {summary.passed}P {summary.warned}W {summary.failed}F")
     """
@@ -278,12 +288,14 @@ class EvalRunner:
         api_key: Optional[str] = None,
         model: Optional[str] = None,
         verbose: bool = True,
-        on_result: Optional[Callable[[EvalResult, int, int], None]] = None,
+        on_result: Optional[Callable[[ReliabilityResult, int, int], None]] = None,
         provider: str = "anthropic",
         base_url: Optional[str] = None,
         schema: Optional[dict] = None,
         latency_p95: Optional[int] = None,
         latency_target: int = 5000,
+        concurrency: int = 1,
+        reliability_config: Optional[ReliabilityConfig] = None,
     ):
         """
         Args:
@@ -296,6 +308,8 @@ class EvalRunner:
             schema: JSON Schema dict to validate agent responses against
             latency_p95: p95 latency threshold in ms (fail run if exceeded)
             latency_target: Target latency in ms for reliability scoring (default: 5000)
+            concurrency: Number of parallel test executions (default: 1, sequential)
+            reliability_config: Custom reliability weight configuration
         """
         self.api_key = api_key
         self.model_override = model
@@ -306,15 +320,20 @@ class EvalRunner:
         self.schema = schema
         self.latency_p95 = latency_p95
         self.latency_target = latency_target
+        self.concurrency = concurrency
+        self.reliability_config = reliability_config
 
     def run(
         self,
-        suite: TestSuite,
+        suite: ReliabilitySuite,
         agent: Optional[Callable[[str], str]] = None,
         tags: Optional[list[str]] = None,
-    ) -> RunSummary:
+    ) -> ReliabilitySummary:
         """
         Execute eval run.
+
+        If concurrency > 1, runs tests in parallel using asyncio.
+        Otherwise runs sequentially (default, backward compatible).
 
         Args:
             suite: Test suite to run
@@ -323,8 +342,28 @@ class EvalRunner:
             tags: Optional tag filter -- only run tests matching these tags
 
         Returns:
-            RunSummary with all results
+            ReliabilitySummary with all results
         """
+        if self.concurrency > 1:
+            try:
+                return asyncio.run(self.run_async(suite, agent=agent, tags=tags))
+            except RuntimeError as e:
+                if "cannot be called from a running event loop" in str(e):
+                    raise RuntimeError(
+                        "Cannot use concurrency > 1 inside an existing event loop "
+                        "(e.g., Jupyter notebook or FastAPI). Use `await runner.run_async(suite)` instead."
+                    ) from e
+                raise
+
+        return self._run_sequential(suite, agent=agent, tags=tags)
+
+    def _run_sequential(
+        self,
+        suite: ReliabilitySuite,
+        agent: Optional[Callable[[str], str]] = None,
+        tags: Optional[list[str]] = None,
+    ) -> ReliabilitySummary:
+        """Execute eval run sequentially."""
         judge = Judge(
             api_key=self.api_key,
             model=self.model_override or suite.model,
@@ -335,7 +374,7 @@ class EvalRunner:
         # Filter tests by tags if specified
         tests = suite.filter_by_tags(tags) if tags else suite.tests
         if not tests:
-            return RunSummary(suite_name=suite.name)
+            return ReliabilitySummary(suite_name=suite.name)
 
         criteria = suite.criteria_dicts()
         custom_rules = suite.custom_rules
@@ -378,7 +417,7 @@ class EvalRunner:
                 schema_result = self._validate_schema(agent_result["answer"])
 
             # Build result
-            eval_result = EvalResult(
+            eval_result = ReliabilityResult(
                 question=tc.question,
                 expected_answer=tc.expected_answer or "",
                 agent_answer=agent_result["answer"],
@@ -398,7 +437,119 @@ class EvalRunner:
             if self.on_result:
                 self.on_result(eval_result, i + 1, len(tests))
 
-        # Compute summary
+        return self._build_summary(suite.name, results, start_time, started_at)
+
+    async def run_async(
+        self,
+        suite: ReliabilitySuite,
+        agent: Optional[Callable[[str], str]] = None,
+        tags: Optional[list[str]] = None,
+    ) -> ReliabilitySummary:
+        """
+        Execute eval run with async concurrency.
+
+        Uses asyncio.Semaphore to control parallelism and asyncio.to_thread()
+        to wrap synchronous agent calls and judge scoring.
+
+        Args:
+            suite: Test suite to run
+            agent: Optional callable that takes a question and returns an answer string
+            tags: Optional tag filter
+
+        Returns:
+            ReliabilitySummary with all results (order preserved)
+        """
+        judge = Judge(
+            api_key=self.api_key,
+            model=self.model_override or suite.model,
+            provider=self.provider,
+            base_url=self.base_url,
+        )
+
+        tests = suite.filter_by_tags(tags) if tags else suite.tests
+        if not tests:
+            return ReliabilitySummary(suite_name=suite.name)
+
+        criteria = suite.criteria_dicts()
+        custom_rules = suite.custom_rules
+
+        start_time = time.time()
+        started_at = datetime.utcnow().isoformat()
+
+        semaphore = asyncio.Semaphore(self.concurrency)
+
+        async def _run_single(i: int, tc: ReliabilityCase) -> ReliabilityResult:
+            async with semaphore:
+                if self.verbose:
+                    q_preview = tc.question[:60] + "..." if len(tc.question) > 60 else tc.question
+                    print(f"  [{i+1}/{len(tests)}] {q_preview}")
+
+                # Get agent answer in thread
+                agent_result = await asyncio.to_thread(
+                    self._get_answer, tc, suite.target, agent
+                )
+
+                # Judge in thread
+                try:
+                    judge_result = await asyncio.to_thread(
+                        judge.score,
+                        question=tc.question,
+                        agent_answer=agent_result["answer"],
+                        expected_answer=tc.expected_answer or "",
+                        criteria=criteria,
+                        custom_rules=custom_rules,
+                        context=tc.context,
+                    )
+                except Exception as e:
+                    if self.verbose:
+                        print(f"    Judge error: {e}")
+                    judge_result = JudgeResult(
+                        overall_score=50,
+                        overall_reasoning=f"Judge failed: {str(e)}",
+                        status="warn",
+                    )
+
+                # Schema validation
+                schema_result = None
+                if self.schema:
+                    schema_result = self._validate_schema(agent_result["answer"])
+
+                result = ReliabilityResult(
+                    question=tc.question,
+                    expected_answer=tc.expected_answer or "",
+                    agent_answer=agent_result["answer"],
+                    judge_result=judge_result,
+                    sources=agent_result.get("sources", []),
+                    response_time_ms=agent_result.get("response_time_ms", 0),
+                    tags=tc.tags,
+                    context=tc.context,
+                    schema_result=schema_result,
+                )
+
+                if self.verbose:
+                    status_icon = {"pass": "P", "warn": "W", "fail": "F"}.get(result.status, "?")
+                    print(f"    Score: {result.score} ({status_icon})")
+
+                if self.on_result:
+                    self.on_result(result, i + 1, len(tests))
+
+                return result
+
+        # Launch all tasks, gather preserves order
+        tasks = [_run_single(i, tc) for i, tc in enumerate(tests)]
+        results = await asyncio.gather(*tasks)
+        results = list(results)
+
+        return self._build_summary(suite.name, results, start_time, started_at)
+
+    def _build_summary(
+        self,
+        suite_name: str,
+        results: list[ReliabilityResult],
+        start_time: float,
+        started_at: str,
+    ) -> ReliabilitySummary:
+        """Build a ReliabilitySummary from results."""
         duration = time.time() - start_time
         overall = round(sum(r.score for r in results) / len(results), 1) if results else 0.0
 
@@ -409,13 +560,31 @@ class EvalRunner:
         schema_pass = sum(1 for r in results if r.schema_result and r.schema_result.valid)
         schema_fail = sum(1 for r in results if r.schema_result and not r.schema_result.valid)
 
-        # Reliability score
-        reliability_score, reliability_grade = self._compute_reliability(
-            results, latency_stats, overall, schema_pass, schema_fail,
+        # Reliability score via extracted module
+        has_schema = (schema_pass + schema_fail) > 0
+        has_latency = latency_stats.p95_ms > 0
+
+        schema_score = None
+        if has_schema:
+            schema_score = (schema_pass / (schema_pass + schema_fail)) * 100
+
+        latency_score = None
+        if has_latency:
+            target = self.latency_target
+            if latency_stats.p95_ms <= target:
+                latency_score = 100.0
+            else:
+                latency_score = max(0.0, 100.0 - ((latency_stats.p95_ms - target) / target) * 100)
+
+        reliability_score, reliability_grade = compute_reliability(
+            accuracy_score=overall,
+            schema_score=schema_score,
+            latency_score=latency_score,
+            config=self.reliability_config,
         )
 
-        summary = RunSummary(
-            suite_name=suite.name,
+        summary = ReliabilitySummary(
+            suite_name=suite_name,
             total=len(results),
             passed=sum(1 for r in results if r.status == "pass"),
             warned=sum(1 for r in results if r.status == "warn"),
@@ -439,12 +608,14 @@ class EvalRunner:
 
     def run_stream(
         self,
-        suite: TestSuite,
+        suite: ReliabilitySuite,
         agent: Optional[Callable[[str], str]] = None,
         tags: Optional[list[str]] = None,
-    ) -> Generator[EvalResult, None, RunSummary]:
+    ) -> Generator[ReliabilityResult, None, ReliabilitySummary]:
         """
         Execute eval run, yielding each result as it completes.
+
+        Note: run_stream is always sequential for v1.0.
 
         Usage:
             gen = runner.run_stream(suite, agent=my_agent)
@@ -452,27 +623,16 @@ class EvalRunner:
                 print(f"{result.status}: {result.score}")
             summary = gen.value  # available after iteration
 
-        Or capture the summary via wrapper:
-            results = []
-            summary = None
-            gen = runner.run_stream(suite)
-            try:
-                while True:
-                    result = next(gen)
-                    results.append(result)
-            except StopIteration as e:
-                summary = e.value
-
         Args:
             suite: Test suite to run
             agent: Optional callable that takes a question and returns an answer
             tags: Optional tag filter
 
         Yields:
-            EvalResult for each completed test case
+            ReliabilityResult for each completed test case
 
         Returns:
-            RunSummary (accessible via StopIteration.value)
+            ReliabilitySummary (accessible via StopIteration.value)
         """
         judge = Judge(
             api_key=self.api_key,
@@ -483,7 +643,7 @@ class EvalRunner:
 
         tests = suite.filter_by_tags(tags) if tags else suite.tests
         if not tests:
-            return RunSummary(suite_name=suite.name)
+            return ReliabilitySummary(suite_name=suite.name)
 
         criteria = suite.criteria_dicts()
         custom_rules = suite.custom_rules
@@ -521,7 +681,7 @@ class EvalRunner:
             if self.schema:
                 schema_result = self._validate_schema(agent_result["answer"])
 
-            eval_result = EvalResult(
+            eval_result = ReliabilityResult(
                 question=tc.question,
                 expected_answer=tc.expected_answer or "",
                 agent_answer=agent_result["answer"],
@@ -539,37 +699,11 @@ class EvalRunner:
 
             yield eval_result
 
-        duration = time.time() - start_time
-        overall = round(sum(r.score for r in results) / len(results), 1) if results else 0.0
-
-        latency_stats = LatencyStats.from_results(results)
-        schema_pass = sum(1 for r in results if r.schema_result and r.schema_result.valid)
-        schema_fail = sum(1 for r in results if r.schema_result and not r.schema_result.valid)
-        reliability_score, reliability_grade = self._compute_reliability(
-            results, latency_stats, overall, schema_pass, schema_fail,
-        )
-
-        return RunSummary(
-            suite_name=suite.name,
-            total=len(results),
-            passed=sum(1 for r in results if r.status == "pass"),
-            warned=sum(1 for r in results if r.status == "warn"),
-            failed=sum(1 for r in results if r.status == "fail"),
-            overall_score=overall,
-            results=results,
-            started_at=started_at,
-            completed_at=datetime.utcnow().isoformat(),
-            duration_seconds=duration,
-            latency=latency_stats,
-            schema_pass=schema_pass,
-            schema_fail=schema_fail,
-            reliability_score=reliability_score,
-            reliability_grade=reliability_grade,
-        )
+        return self._build_summary(suite.name, results, start_time, started_at)
 
     @staticmethod
     def preflight(
-        suite: TestSuite,
+        suite: ReliabilitySuite,
         timeout: int = 5,
         verbose: bool = True,
         provider: str = "anthropic",
@@ -721,78 +855,9 @@ class EvalRunner:
         except jsonschema.SchemaError as e:
             return SchemaResult(valid=False, errors=[f"Invalid schema: {e.message}"])
 
-    def _compute_reliability(
-        self,
-        results: list,
-        latency: LatencyStats,
-        accuracy_score: float,
-        schema_pass: int,
-        schema_fail: int,
-    ) -> tuple:
-        """
-        Compute Agent Reliability Score.
-
-        Three pillars:
-        - Correctness (accuracy_score from judge, 0-100)
-        - Structural (schema adherence, 0 or 100 per test)
-        - Performance (latency vs target)
-
-        Returns (score, grade) tuple.
-        """
-        has_schema = (schema_pass + schema_fail) > 0
-        has_latency = latency.p95_ms > 0
-
-        # Correctness: just the judge score
-        correctness = accuracy_score
-
-        # Schema: percentage valid
-        if has_schema:
-            schema_score = (schema_pass / (schema_pass + schema_fail)) * 100
-        else:
-            schema_score = None
-
-        # Latency: score based on p95 vs target
-        if has_latency:
-            target = self.latency_target
-            if latency.p95_ms <= target:
-                latency_score = 100.0
-            else:
-                # Linearly degrade: at 2x target = 0
-                latency_score = max(0, 100 - ((latency.p95_ms - target) / target) * 100)
-        else:
-            latency_score = None
-
-        # Weighted composite
-        if has_schema and has_latency:
-            # All three pillars
-            reliability = (correctness * 0.5) + (schema_score * 0.25) + (latency_score * 0.25)
-        elif has_schema:
-            reliability = (correctness * 0.6) + (schema_score * 0.4)
-        elif has_latency:
-            reliability = (correctness * 0.7) + (latency_score * 0.3)
-        else:
-            # Only correctness available
-            reliability = correctness
-
-        reliability = round(reliability, 1)
-
-        # Grade
-        if reliability >= 90:
-            grade = "A"
-        elif reliability >= 75:
-            grade = "B"
-        elif reliability >= 60:
-            grade = "C"
-        elif reliability >= 40:
-            grade = "D"
-        else:
-            grade = "F"
-
-        return reliability, grade
-
     def _get_answer(
         self,
-        tc: TestCase,
+        tc: ReliabilityCase,
         target: AgentTarget,
         agent: Optional[Callable],
     ) -> dict:
@@ -819,3 +884,7 @@ class EvalRunner:
             "sources": [],
             "response_time_ms": 0,
         }
+
+
+# Deprecated alias
+EvalRunner = ReliabilityRunner
