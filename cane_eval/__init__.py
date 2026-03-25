@@ -18,6 +18,7 @@ from cane_eval.engine import (
 from cane_eval.export import Exporter
 from cane_eval.mining import FailureMiner
 from cane_eval.rca import RootCauseAnalyzer, RCAResult, TargetedRCAResult
+from cane_eval.profiler import Profiler, ProfileResult, PersonalityProfile, SteeringVector, ContrastivePair
 from cane_eval.criteria import CriterionPlugin, CriteriaRegistry, EvalContext, CriterionType
 from cane_eval.reliability import ReliabilityConfig
 
@@ -68,6 +69,12 @@ __all__ = [
     "RootCauseAnalyzer",
     "RCAResult",
     "TargetedRCAResult",
+    # Profiler
+    "Profiler",
+    "ProfileResult",
+    "PersonalityProfile",
+    "SteeringVector",
+    "ContrastivePair",
     # Integrations
     "evaluate_langchain",
     "evaluate_llamaindex",

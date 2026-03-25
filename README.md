@@ -204,29 +204,12 @@ Old names (`EvalRunner`, `TestSuite`, `TestCase`, `EvalResult`, `RunSummary`) st
 ## Framework Integrations
 
 ```python
-from cane_eval import evaluate_langchain, evaluate_llamaindex, evaluate_openai, evaluate_fastapi, evaluate_phlote
+from cane_eval import evaluate_langchain, evaluate_llamaindex, evaluate_openai, evaluate_fastapi
 
 results = evaluate_langchain(chain, suite="qa.yaml")
 results = evaluate_llamaindex(query_engine, suite="qa.yaml")
 results = evaluate_openai("http://localhost:11434/v1/chat/completions", suite="qa.yaml")
 results = evaluate_fastapi("http://localhost:8000/ask", suite="qa.yaml")
-results = evaluate_phlote(music_agent, suite="music_eval.yaml")  # Phlote.xyz music infrastructure
-```
-
-## Phlote Integration
-
-Domain-specific reliability evaluation for AI music systems:
-
-```python
-from cane_eval.integrations.phlote import evaluate_phlote, phlote_registry
-
-# Evaluate a music agent with domain criteria
-results = evaluate_phlote(music_agent, suite="music_eval.yaml")
-
-# Access Phlote-specific criteria
-registry = phlote_registry()
-# Includes: RightsClearanceCriterion, MetadataCompletenessCriterion,
-#           LicensingValidityCriterion, ContextualRelevanceCriterion
 ```
 
 ## Eval Targets

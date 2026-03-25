@@ -12,7 +12,7 @@ requires-python = ">=3.10"
 authors = [
     { name = "Cane" },
 ]
-keywords = ["llm", "eval", "evaluation", "ai-agents", "dpo", "training-data", "judge", "reliability", "schema-validation", "latency", "ai-reliability", "phlote"]
+keywords = ["llm", "eval", "evaluation", "ai-agents", "dpo", "training-data", "judge", "reliability", "schema-validation", "latency", "ai-reliability", "phlote", "personality-profiling", "steering-vectors", "embedding-analysis"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -28,6 +28,7 @@ dependencies = [
     "anthropic>=0.39.0",
     "pyyaml>=6.0",
     "jsonschema>=4.0.0",
+    "numpy>=1.24.0",
 ]
 
 [project.optional-dependencies]
@@ -57,6 +58,13 @@ integrations = [
 all-providers = [
     "openai>=1.0.0",
     "google-genai>=1.0.0",
+]
+profile = [
+    "sentence-transformers>=2.2.0",
+]
+profile-umap = [
+    "sentence-transformers>=2.2.0",
+    "umap-learn>=0.5.0",
 ]
 phlote = []
 dev = [
