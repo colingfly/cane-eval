@@ -212,6 +212,53 @@ results = evaluate_openai("http://localhost:11434/v1/chat/completions", suite="q
 results = evaluate_fastapi("http://localhost:8000/ask", suite="qa.yaml")
 ```
 
+## Agent Personality Profiler
+
+Embed model outputs, cluster by behavior, and extract steering vectors — visualize *how* your agent thinks, not just whether it's correct.
+
+```bash
+# Profile from a test suite
+cane-eval profile tests.yaml --html report.html
+
+# Profile from existing results
+cane-eval profile --results eval_results.json --html report.html
+
+# Export steering vectors for post-training
+cane-eval profile tests.yaml --export-vectors vectors.json
+```
+
+Profiles 6 behavioral traits:
+
+| Trait | What it captures |
+|-------|-----------------|
+| **Overconfidence** | Confidently wrong — high fluency, low accuracy |
+| **Calibration** | Expressed certainty matches actual correctness |
+| **Verbosity** | Response length relative to expected |
+| **Hedging** | Excessive qualification and uncertainty language |
+| **Groundedness** | Answers grounded in retrieved context |
+| **Completeness** | Covers all key points |
+
+Generates interactive HTML reports with embedding space scatter plots, personality radar charts, behavioral clusters, contrastive pairs, and steering vectors with magnitudes.
+
+```python
+from cane_eval import AgentProfiler
+
+profiler = AgentProfiler(embedding_model="all-MiniLM-L6-v2")
+profile = profiler.profile(results, suite_name="my-agent")
+
+# Steering vectors — directions in embedding space
+for sv in profile.steering_vectors:
+    print(f"{sv.name}: magnitude {sv.magnitude:.3f}")
+
+# Export HTML report
+profile.to_html("report.html")
+```
+
+```bash
+pip install cane-eval[profile]       # sentence-transformers + numpy
+pip install cane-eval[profile-umap]  # + UMAP for better projections
+```
+
 ## Eval Targets
 
 ```yaml
@@ -252,6 +299,11 @@ YAML Suite --> Agent --> LLM Judge -----> Reliability Score (A-F)
                   v          v              Training Data
             Root Cause    Failure           (DPO/SFT/OpenAI)
             Analysis      Mining
+                             |
+                             v
+                      Personality Profiler
+                    (embeddings, clusters,
+                     steering vectors)
 ```
 
 ## License
