@@ -761,6 +761,29 @@ def cmd_profile(args):
         verbose=not args.quiet,
     )
 
+    if args.demo:
+        # Use built-in personality probe suite
+        suite_path = Path(__file__).parent.parent / "examples" / "personality.yaml"
+        if not suite_path.exists():
+            # Fallback: check installed package data
+            import importlib.resources
+            try:
+                suite_path = importlib.resources.files("cane_eval").parent / "examples" / "personality.yaml"
+            except Exception:
+                pass
+        if not suite_path.exists():
+            print(c("  Error: Built-in personality suite not found.", "red"))
+            print(c("  Install from source or provide your own suite.", "dim"))
+            sys.exit(1)
+        args.suite = str(suite_path)
+        args.results = None
+        if not args.quiet:
+            print()
+            print(f"  {c('cane-eval profile --demo', 'cyan')}")
+            print(f"  {c('Running built-in personality probe suite (20 test cases)', 'dim')}")
+            print(f"  {c('Probing: overconfidence, calibration, hedging, verbosity, groundedness, completeness', 'dim')}")
+            print()
+
     if args.results:
         # Profile from existing results JSON
         if not args.quiet:
@@ -970,6 +993,7 @@ def main():
     # profile
     profile_parser = subparsers.add_parser("profile", help="Run personality profiling on eval results")
     profile_parser.add_argument("suite", nargs="?", help="Path to YAML test suite (runs eval then profiles)")
+    profile_parser.add_argument("--demo", action="store_true", help="Run built-in personality probe suite (20 questions targeting all 6 traits)")
     profile_parser.add_argument("--results", help="Path to existing results JSON (skip running eval)")
     profile_parser.add_argument("--model", help="Override judge model")
     profile_parser.add_argument("--api-key", help="API key for judge provider")

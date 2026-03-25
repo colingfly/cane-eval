@@ -170,6 +170,8 @@ cane-eval run tests.yaml --reliability-weights 60:20:20  # custom weights
 cane-eval run tests.yaml --schema schema.json     # + schema validation
 cane-eval run tests.yaml --latency-p95 10000      # + latency threshold
 cane-eval run tests.yaml --mine --export dpo      # + failure mining
+cane-eval profile --demo --html report.html        # personality profile (zero-config)
+cane-eval profile tests.yaml --export-vectors v.json  # profile + steering vectors
 cane-eval rca tests.yaml --targeted               # root cause analysis
 cane-eval diff old.json new.json                  # regression diff
 cane-eval demo                                    # try it in 30 seconds
@@ -217,7 +219,10 @@ results = evaluate_fastapi("http://localhost:8000/ask", suite="qa.yaml")
 Embed model outputs, cluster by behavior, and extract steering vectors — visualize *how* your agent thinks, not just whether it's correct.
 
 ```bash
-# Profile from a test suite
+# Zero-config: run built-in personality probe (20 questions, all 6 traits)
+cane-eval profile --demo --html report.html
+
+# Profile from your own test suite
 cane-eval profile tests.yaml --html report.html
 
 # Profile from existing results
