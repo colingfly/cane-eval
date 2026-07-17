@@ -66,6 +66,7 @@ class Competitor:
     model: Optional[str] = None
     base_url: Optional[str] = None
     api_key: Optional[str] = None
+    api_key_env: Optional[str] = None  # env var to read the key from (keeps keys out of YAML)
     system: Optional[str] = None  # system prompt given to the competitor
 
     @classmethod
@@ -76,8 +77,18 @@ class Competitor:
             model=d.get("model"),
             base_url=d.get("base_url"),
             api_key=d.get("api_key"),
+            api_key_env=d.get("api_key_env"),
             system=d.get("system"),
         )
+
+    def resolve_api_key(self) -> Optional[str]:
+        """Resolve the API key: explicit value first, then api_key_env."""
+        import os
+        if self.api_key:
+            return self.api_key
+        if self.api_key_env:
+            return os.environ.get(self.api_key_env)
+        return None
 
 
 @dataclass
@@ -474,7 +485,7 @@ def model_agent(competitor: Competitor) -> Callable[[str], str]:
     provider = get_provider(
         provider=competitor.provider,
         model=competitor.model,
-        api_key=competitor.api_key,
+        api_key=competitor.resolve_api_key(),
         base_url=competitor.base_url,
     )
     system = competitor.system or (

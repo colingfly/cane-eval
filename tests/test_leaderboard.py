@@ -191,6 +191,31 @@ def test_competitor_from_dict_defaults():
     assert c2.name == "Custom"
 
 
+def test_competitor_resolves_key_from_env(monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    c = Competitor.from_dict({
+        "name": "Kimi K2",
+        "provider": "openai-compatible",
+        "model": "moonshotai/kimi-k2",
+        "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY",
+    })
+    assert c.api_key_env == "OPENROUTER_API_KEY"
+    assert c.resolve_api_key() == "sk-or-test"
+
+
+def test_competitor_explicit_key_beats_env(monkeypatch):
+    monkeypatch.setenv("SOME_KEY", "from-env")
+    c = Competitor(name="x", api_key="explicit", api_key_env="SOME_KEY")
+    assert c.resolve_api_key() == "explicit"
+
+
+def test_competitor_missing_env_key_is_none(monkeypatch):
+    monkeypatch.delenv("MISSING_KEY", raising=False)
+    c = Competitor(name="x", api_key_env="MISSING_KEY")
+    assert c.resolve_api_key() is None
+
+
 def test_empty_leaderboard_renders():
     board = Leaderboard(suite_name="empty")
     md = board.to_markdown()

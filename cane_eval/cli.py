@@ -758,6 +758,16 @@ def cmd_leaderboard(args):
         judge = cfg.get("judge", {}) or {}
         judge_provider = args.judge_provider or judge.get("provider", "anthropic")
         judge_model = args.judge_model or judge.get("model")
+        judge_base_url = args.judge_base_url or judge.get("base_url")
+
+        # Resolve the judge API key in a provider-aware way. Precedence:
+        # --api-key > judge.api_key_env in config > the provider's default env var.
+        from cane_eval.providers import PROVIDERS, PROVIDER_ALIASES
+        resolved_provider = PROVIDER_ALIASES.get(judge_provider.lower(), judge_provider.lower())
+        provider_cls = PROVIDERS.get(resolved_provider)
+        default_env = provider_cls.env_key() if provider_cls else "ANTHROPIC_API_KEY"
+        judge_env_var = judge.get("api_key_env", default_env)
+        judge_api_key = args.api_key or os.environ.get(judge_env_var)
 
         # Load shared schema if provided
         schema = None
@@ -773,8 +783,6 @@ def cmd_leaderboard(args):
         print(f"  {c('cane-eval leaderboard', 'cyan')} {c(suite.name, 'bold')}")
         print(f"  {len(suite.tests)} cases | {len(competitors)} competitors | judge: {judge_model or judge_provider}")
 
-        env_key = os.environ.get("ANTHROPIC_API_KEY")
-
         def _on_start(comp, i, total):
             print(f"  {c(f'[{i}/{total}]', 'dim')} running {c(comp.name, 'bold')}...")
 
@@ -783,7 +791,8 @@ def cmd_leaderboard(args):
             competitors,
             judge_provider=judge_provider,
             judge_model=judge_model,
-            judge_api_key=args.api_key or env_key,
+            judge_api_key=judge_api_key,
+            judge_base_url=judge_base_url,
             schema=schema,
             concurrency=args.concurrency or 1,
             generated_at=datetime.utcnow().strftime("%Y-%m-%d"),
@@ -933,6 +942,7 @@ def main():
     lb_parser.add_argument("--demo", action="store_true", help="Print a sample leaderboard offline (no API key)")
     lb_parser.add_argument("--judge-provider", help="Override judge provider")
     lb_parser.add_argument("--judge-model", help="Override judge model")
+    lb_parser.add_argument("--judge-base-url", help="Base URL for an OpenAI-compatible judge (e.g. https://openrouter.ai/api/v1)")
     lb_parser.add_argument("--api-key", help="Judge API key (or set the provider's env var)")
     lb_parser.add_argument("--schema", help="Path to a shared JSON Schema applied to every competitor")
     lb_parser.add_argument("--concurrency", "-j", type=int, default=0, help="Parallel test executions per competitor")

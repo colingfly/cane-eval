@@ -1,0 +1,52 @@
+# All-open-source leaderboard: open models judged by an open model.
+#
+# Everything runs through OpenRouter's single OpenAI-compatible endpoint,
+# so you need exactly ONE key -- no Anthropic, no OpenAI:
+#
+#   export OPENROUTER_API_KEY=sk-or-...
+#   cane-eval leaderboard examples/leaderboard/benchmark.yaml \
+#       --config examples/leaderboard/competitors.opensource.yaml \
+#       --output-md LEADERBOARD.md --output-html leaderboard.html
+#
+# Swap OpenRouter for any OpenAI-compatible host (Together, Groq, Fireworks,
+# DeepInfra, Moonshot direct, or a local vLLM/Ollama) by changing base_url.
+# Verify current model slugs at https://openrouter.ai/models -- open-weight
+# model IDs move fast.
+
+# The judge is open-weight too: Kimi K2 scores every competitor.
+judge:
+  provider: openai-compatible
+  model: moonshotai/kimi-k2
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: OPENROUTER_API_KEY
+
+competitors:
+  - name: Kimi K2
+    provider: openai-compatible
+    model: moonshotai/kimi-k2
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+
+  - name: DeepSeek V3
+    provider: openai-compatible
+    model: deepseek/deepseek-chat
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+
+  - name: Qwen 2.5 72B
+    provider: openai-compatible
+    model: qwen/qwen-2.5-72b-instruct
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+
+  - name: Llama 4 Maverick
+    provider: openai-compatible
+    model: meta-llama/llama-4-maverick
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+
+  - name: Mistral Small
+    provider: openai-compatible
+    model: mistralai/mistral-small
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY

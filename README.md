@@ -137,6 +137,35 @@ cane-eval leaderboard examples/leaderboard/benchmark.yaml \
 
 Every competitor answers the same suite; one judge scores them all, so the comparison is apples-to-apples. A competitor whose run fails becomes an `error` row instead of aborting the board.
 
+**All open-source, one key.** The judge can be open-weight too. Route every model — competitors *and* judge — through a single OpenAI-compatible endpoint (OpenRouter, Together, Groq, Fireworks, or a local vLLM/Ollama) and keep keys out of YAML with `api_key_env`:
+
+```bash
+export OPENROUTER_API_KEY=sk-or-...
+cane-eval leaderboard examples/leaderboard/benchmark.yaml \
+    --config examples/leaderboard/competitors.opensource.yaml
+```
+
+```yaml
+# competitors.opensource.yaml — no Anthropic, no OpenAI
+judge:
+  provider: openai-compatible
+  model: moonshotai/kimi-k2          # Kimi judges the field
+  base_url: https://openrouter.ai/api/v1
+  api_key_env: OPENROUTER_API_KEY
+competitors:
+  - name: Kimi K2
+    provider: openai-compatible
+    model: moonshotai/kimi-k2
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+  - name: DeepSeek V3
+    provider: openai-compatible
+    model: deepseek/deepseek-chat
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+  # ...Qwen, Llama 4, Mistral
+```
+
 ```yaml
 # competitors.yaml
 judge:
