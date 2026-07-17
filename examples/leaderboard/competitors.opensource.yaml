@@ -23,6 +23,12 @@ judge:
   api_key_env: OPENROUTER_API_KEY
 
 competitors:
+  - name: Kimi K3
+    provider: openai-compatible
+    model: moonshotai/kimi-k3          # 2.8T open-weight reasoning model, 1M ctx
+    base_url: https://openrouter.ai/api/v1
+    api_key_env: OPENROUTER_API_KEY
+
   - name: Kimi K2
     provider: openai-compatible
     model: moonshotai/kimi-k2
