@@ -1,0 +1,35 @@
+# Competitor configuration for `cane-eval leaderboard`.
+#
+#   cane-eval leaderboard examples/leaderboard/benchmark.yaml \
+#       --config examples/leaderboard/competitors.yaml \
+#       --output-md LEADERBOARD.md --output-html leaderboard.html
+#
+# Every competitor answers the same benchmark suite; a single fixed judge
+# scores them all so the ranking is apples-to-apples. Set the API keys for
+# whichever providers you list (ANTHROPIC_API_KEY, OPENAI_API_KEY, ...).
+
+# The judge is held constant across all competitors.
+judge:
+  provider: anthropic
+  model: claude-sonnet-4-5-20250929
+
+competitors:
+  - name: Claude Sonnet 4.5
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+
+  - name: GPT-4o
+    provider: openai
+    model: gpt-4o
+
+  - name: Gemini 2.0 Flash
+    provider: gemini
+    model: gemini-2.0-flash
+
+  # Any OpenAI-compatible endpoint (Ollama, vLLM, Together, Groq, ...)
+  - name: Llama 3 (local)
+    provider: openai-compatible
+    model: llama3
+    base_url: http://localhost:11434/v1
+    # Optional per-competitor system prompt:
+    # system: "You are a concise, accurate customer support assistant."

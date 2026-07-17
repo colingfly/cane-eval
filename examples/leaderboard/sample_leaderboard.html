@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Reliability Leaderboard &middot; Support Agent Benchmark v1 (illustrative sample)</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #0f172a; --muted: #64748b;
+    --line: #e2e8f0; --row: #f8fafc; --accent: #4f46e5;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0b1120; --fg: #e2e8f0; --muted: #94a3b8;
+      --line: #1e293b; --row: #111a2e; --accent: #818cf8;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 2.5rem 1rem; background: var(--bg); color: var(--fg);
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 860px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 .35rem; letter-spacing: -0.02em; }
+  .meta { color: var(--muted); font-size: .85rem; margin-bottom: 1.5rem; }
+  .scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+  table { width: 100%; border-collapse: collapse; min-width: 620px; }
+  th, td { padding: .7rem .9rem; text-align: right; white-space: nowrap; }
+  th {
+    font-size: .72rem; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--muted); border-bottom: 1px solid var(--line); font-weight: 600;
+  }
+  th:nth-child(2), td.name { text-align: left; }
+  tbody tr:nth-child(even) { background: var(--row); }
+  td.rank { color: var(--muted); }
+  td.name { font-weight: 600; }
+  td.name .sub { display: block; font-weight: 400; font-size: .78rem; color: var(--muted); }
+  td.score { font-weight: 700; font-size: 1.05rem; }
+  .grade {
+    display: inline-block; min-width: 1.6rem; padding: .1rem .4rem; border-radius: 6px;
+    color: #fff; font-weight: 700; font-size: .8rem; text-align: center;
+  }
+  tr.errored td { color: var(--muted); font-style: italic; }
+  footer { color: var(--muted); font-size: .78rem; margin-top: 1.25rem; }
+  a { color: var(--accent); }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Agent Reliability Leaderboard</h1>
+    <div class="meta">Support Agent Benchmark v1 (illustrative sample) &middot; 12 test cases &middot; judged by claude-sonnet-4-5-20250929 &middot; generated 2026-07-17</div>
+    <div class="scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Rank</th><th>System</th><th>Reliability</th><th>Grade</th>
+            <th>Correctness</th><th>Pass rate</th><th>p95</th><th>Schema</th>
+          </tr>
+        </thead>
+        <tbody>
+<tr><td class="rank">🥇 1</td><td class="name">Reference Agent A<span class=sub>reference-a</span></td><td class="score">97</td><td><span class="grade" style="background:#16a34a">A</span></td><td>94</td><td>92%</td><td>1.3s</td><td>100%</td></tr>
+<tr><td class="rank">🥈 2</td><td class="name">Reference Agent B<span class=sub>reference-b</span></td><td class="score">92</td><td><span class="grade" style="background:#16a34a">A</span></td><td>88</td><td>83%</td><td>2.6s</td><td>92%</td></tr>
+<tr><td class="rank">🥉 3</td><td class="name">Reference Agent C<span class=sub>reference-c</span></td><td class="score">85</td><td><span class="grade" style="background:#65a30d">B</span></td><td>79</td><td>75%</td><td>4.2s</td><td>83%</td></tr>
+<tr><td class="rank"> 4</td><td class="name">Reference Agent D (local)<span class=sub>reference-d</span></td><td class="score">54</td><td><span class="grade" style="background:#ea580c">D</span></td><td>66</td><td>58%</td><td>9.1s</td><td>67%</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <footer>
+      Reliability blends correctness (LLM-judged), structural validity, and
+      performance. Generated with
+      <a href="https://github.com/colingfly/cane-eval">cane-eval</a>.
+    </footer>
+  </div>
+</body>
+</html>

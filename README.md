@@ -121,6 +121,61 @@ reliability:
   performance_weight: 0.20
 ```
 
+## Leaderboard
+
+Rank multiple systems on one benchmark with a single fixed judge, then publish the result as Markdown, JSON, or a standalone HTML page.
+
+```bash
+# See the format instantly -- offline, no API key
+cane-eval leaderboard --demo
+
+# Score real competitors and write a README-ready table
+cane-eval leaderboard examples/leaderboard/benchmark.yaml \
+    --config examples/leaderboard/competitors.yaml \
+    --output-md LEADERBOARD.md --output-html leaderboard.html
+```
+
+Every competitor answers the same suite; one judge scores them all, so the comparison is apples-to-apples. A competitor whose run fails becomes an `error` row instead of aborting the board.
+
+```yaml
+# competitors.yaml
+judge:
+  provider: anthropic
+  model: claude-sonnet-4-5-20250929
+competitors:
+  - name: Claude Sonnet 4.5
+    provider: anthropic
+    model: claude-sonnet-4-5-20250929
+  - name: GPT-4o
+    provider: openai
+    model: gpt-4o
+  - name: Llama 3 (local)
+    provider: openai-compatible
+    model: llama3
+    base_url: http://localhost:11434/v1
+```
+
+Sample output ([full sample](LEADERBOARD.md)):
+
+| Rank | System | Reliability | Grade | Pass rate | p95 latency |
+| ---: | :--- | ---: | :---: | ---: | ---: |
+| 🥇 1 | Reference Agent A | **97** | A | 92% | 1.3s |
+| 🥈 2 | Reference Agent B | **92** | A | 83% | 2.6s |
+| 🥉 3 | Reference Agent C | **85** | B | 75% | 4.2s |
+
+Or from Python:
+
+```python
+from cane_eval import ReliabilitySuite, Competitor, run_leaderboard
+
+suite = ReliabilitySuite.from_yaml("benchmark.yaml")
+board = run_leaderboard(suite, [
+    Competitor(name="GPT-4o", provider="openai", model="gpt-4o"),
+    Competitor(name="Claude Sonnet 4.5", provider="anthropic", model="claude-sonnet-4-5-20250929"),
+], judge_provider="anthropic", judge_model="claude-sonnet-4-5-20250929")
+print(board.to_markdown())
+```
+
 ## Extensible Criteria
 
 Build custom evaluation criteria for any domain:
@@ -172,6 +227,8 @@ cane-eval run tests.yaml --latency-p95 10000      # + latency threshold
 cane-eval run tests.yaml --mine --export dpo      # + failure mining
 cane-eval rca tests.yaml --targeted               # root cause analysis
 cane-eval diff old.json new.json                  # regression diff
+cane-eval leaderboard bench.yaml --config competitors.yaml  # rank systems
+cane-eval leaderboard --demo                      # sample leaderboard, offline
 cane-eval demo                                    # try it in 30 seconds
 ```
 

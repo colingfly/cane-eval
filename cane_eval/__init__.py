@@ -20,6 +20,9 @@ from cane_eval.mining import FailureMiner
 from cane_eval.rca import RootCauseAnalyzer, RCAResult, TargetedRCAResult
 from cane_eval.criteria import CriterionPlugin, CriteriaRegistry, EvalContext, CriterionType
 from cane_eval.reliability import ReliabilityConfig
+from cane_eval.leaderboard import (
+    Leaderboard, LeaderboardEntry, Competitor, run_leaderboard, demo_leaderboard,
+)
 
 # Integrations (lazy-loaded to avoid import errors if frameworks not installed)
 from cane_eval.integrations import (
@@ -56,6 +59,12 @@ __all__ = [
     "CriterionType",
     # Config
     "ReliabilityConfig",
+    # Leaderboard
+    "Leaderboard",
+    "LeaderboardEntry",
+    "Competitor",
+    "run_leaderboard",
+    "demo_leaderboard",
     # Judge
     "Judge",
     "JudgeResult",

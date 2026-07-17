@@ -685,6 +685,130 @@ def cmd_rca(args):
     sys.exit(0)
 
 
+def print_leaderboard(board):
+    """Print a ranked leaderboard to the terminal."""
+    print()
+    print(f"  {c('Agent Reliability Leaderboard', 'bold')}")
+    meta = f"{board.total_cases} cases"
+    if board.judge_model:
+        meta += f" | judge: {board.judge_model}"
+    print(f"  {c(board.suite_name, 'cyan')}  {c(meta, 'dim')}")
+    print(c("  " + "-" * 66, "dim"))
+    print()
+
+    medals = {1: "1", 2: "2", 3: "3"}
+    for e in board.entries:
+        if not e.ok:
+            print(f"  {c(f'{e.rank}.', 'dim')} {e.name}  {c('run failed', 'red')}")
+            continue
+        rank = c(f"{medals.get(e.rank, str(e.rank))}.", "bold")
+        name = f"{e.name[:32]:<32}"
+        score = _score_color(e.reliability_score)
+        grade = _grade_color(e.reliability_grade)
+        bar = _bar(e.reliability_score, 16)
+        suffix = f"{c(f'{e.pass_rate:.0f}% pass', 'dim')}  {c(_format_ms(e.p95_ms), 'dim')}"
+        if e.schema_pct is not None:
+            suffix += f"  {c(f'schema {e.schema_pct:.0f}%', 'dim')}"
+        print(f"  {rank} {name} {bar} {score} ({grade})  {suffix}")
+    print()
+
+
+def cmd_leaderboard(args):
+    """Run a benchmark suite against multiple competitors and rank them."""
+    import yaml
+    from datetime import datetime
+    from cane_eval.leaderboard import (
+        Competitor, run_leaderboard, demo_leaderboard,
+    )
+
+    # Offline demo -- no API key, no suite required.
+    if args.demo:
+        board = demo_leaderboard(generated_at=datetime.utcnow().strftime("%Y-%m-%d"))
+    else:
+        if not args.suite:
+            print(c("  Error: a benchmark suite YAML is required (or use --demo)", "red"))
+            sys.exit(1)
+        if not args.config:
+            print(c("  Error: --config competitors.yaml is required (or use --demo)", "red"))
+            sys.exit(1)
+
+        from cane_eval.suite import ReliabilitySuite
+
+        try:
+            suite = ReliabilitySuite.from_yaml(args.suite)
+        except FileNotFoundError:
+            print(c(f"  Error: Suite file not found: {args.suite}", "red"))
+            sys.exit(1)
+        except Exception as e:
+            print(c(f"  Error loading suite: {e}", "red"))
+            sys.exit(1)
+
+        try:
+            with open(args.config, "r") as f:
+                cfg = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            print(c(f"  Error: Config file not found: {args.config}", "red"))
+            sys.exit(1)
+
+        competitors = [Competitor.from_dict(cd) for cd in cfg.get("competitors", [])]
+        if not competitors:
+            print(c("  Error: config lists no competitors", "red"))
+            sys.exit(1)
+
+        judge = cfg.get("judge", {}) or {}
+        judge_provider = args.judge_provider or judge.get("provider", "anthropic")
+        judge_model = args.judge_model or judge.get("model")
+
+        # Load shared schema if provided
+        schema = None
+        if args.schema:
+            try:
+                with open(args.schema, "r") as f:
+                    schema = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError) as e:
+                print(c(f"  Error loading schema: {e}", "red"))
+                sys.exit(1)
+
+        print()
+        print(f"  {c('cane-eval leaderboard', 'cyan')} {c(suite.name, 'bold')}")
+        print(f"  {len(suite.tests)} cases | {len(competitors)} competitors | judge: {judge_model or judge_provider}")
+
+        env_key = os.environ.get("ANTHROPIC_API_KEY")
+
+        def _on_start(comp, i, total):
+            print(f"  {c(f'[{i}/{total}]', 'dim')} running {c(comp.name, 'bold')}...")
+
+        board = run_leaderboard(
+            suite,
+            competitors,
+            judge_provider=judge_provider,
+            judge_model=judge_model,
+            judge_api_key=args.api_key or env_key,
+            schema=schema,
+            concurrency=args.concurrency or 1,
+            generated_at=datetime.utcnow().strftime("%Y-%m-%d"),
+            on_competitor_start=_on_start,
+        )
+
+    if not args.quiet:
+        print_leaderboard(board)
+
+    # Outputs
+    if args.output_md:
+        with open(args.output_md, "w") as f:
+            f.write(board.to_markdown())
+        print(f"  Markdown leaderboard written to {args.output_md}")
+    if args.output_json:
+        with open(args.output_json, "w") as f:
+            json.dump(board.to_dict(), f, indent=2)
+        print(f"  JSON leaderboard written to {args.output_json}")
+    if args.output_html:
+        with open(args.output_html, "w") as f:
+            f.write(board.to_html())
+        print(f"  HTML leaderboard written to {args.output_html}")
+    print()
+
+
 def cmd_demo(args):
     """Run built-in demo."""
     from cane_eval.demo import run_demo
@@ -802,6 +926,21 @@ def main():
     validate_parser = subparsers.add_parser("validate", help="Validate a test suite YAML")
     validate_parser.add_argument("suite", help="Path to YAML test suite")
 
+    # leaderboard
+    lb_parser = subparsers.add_parser("leaderboard", help="Rank multiple systems by reliability")
+    lb_parser.add_argument("suite", nargs="?", help="Path to the benchmark suite YAML")
+    lb_parser.add_argument("--config", help="Path to competitors YAML (judge + competitors list)")
+    lb_parser.add_argument("--demo", action="store_true", help="Print a sample leaderboard offline (no API key)")
+    lb_parser.add_argument("--judge-provider", help="Override judge provider")
+    lb_parser.add_argument("--judge-model", help="Override judge model")
+    lb_parser.add_argument("--api-key", help="Judge API key (or set the provider's env var)")
+    lb_parser.add_argument("--schema", help="Path to a shared JSON Schema applied to every competitor")
+    lb_parser.add_argument("--concurrency", "-j", type=int, default=0, help="Parallel test executions per competitor")
+    lb_parser.add_argument("--output-md", help="Write the leaderboard as Markdown (for a README)")
+    lb_parser.add_argument("--output-json", help="Write the leaderboard as JSON")
+    lb_parser.add_argument("--output-html", help="Write the leaderboard as a standalone HTML page")
+    lb_parser.add_argument("--quiet", "-q", action="store_true", help="Suppress terminal table")
+
     # demo
     demo_parser = subparsers.add_parser("demo", help="Run built-in demo (no setup required)")
     demo_parser.add_argument("--with-rca", action="store_true", help="Include root cause analysis")
@@ -821,6 +960,8 @@ def main():
         cmd_rca(args)
     elif args.command == "validate":
         cmd_validate(args)
+    elif args.command == "leaderboard":
+        cmd_leaderboard(args)
     elif args.command == "demo":
         cmd_demo(args)
     elif args.command == "preflight":
