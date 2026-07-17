@@ -153,6 +153,8 @@ cane-eval leaderboard examples/leaderboard/benchmark.yaml \
     --config examples/leaderboard/competitors.opensource.yaml
 ```
 
+> If `cane-eval` isn't found (its Scripts/ dir isn't on PATH — common on Windows), run it as a module instead: `python -m cane_eval leaderboard ...`.
+
 ```yaml
 # competitors.opensource.yaml — no Anthropic, no OpenAI
 judge:
