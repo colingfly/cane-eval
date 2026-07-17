@@ -1,9 +1,11 @@
 # All-open-source leaderboard: open models judged by an open model.
 #
 # Everything runs through OpenRouter's single OpenAI-compatible endpoint,
-# so you need exactly ONE key -- no Anthropic, no OpenAI:
+# so you need exactly ONE key -- no Anthropic, no OpenAI. OpenAI-compatible
+# endpoints require the openai client:
 #
-#   export OPENROUTER_API_KEY=sk-or-...
+#   pip install cane-eval[openai]
+#   export OPENROUTER_API_KEY=sk-or-...          # PowerShell: $env:OPENROUTER_API_KEY="sk-or-..."
 #   cane-eval leaderboard examples/leaderboard/benchmark.yaml \
 #       --config examples/leaderboard/competitors.opensource.yaml \
 #       --output-md LEADERBOARD.md --output-html leaderboard.html

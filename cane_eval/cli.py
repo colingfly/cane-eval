@@ -699,7 +699,9 @@ def print_leaderboard(board):
     medals = {1: "1", 2: "2", 3: "3"}
     for e in board.entries:
         if not e.ok:
-            print(f"  {c(f'{e.rank}.', 'dim')} {e.name}  {c('run failed', 'red')}")
+            reason = (e.error or "").splitlines()[0][:90] if e.error else ""
+            msg = f"run failed: {reason}" if reason else "run failed"
+            print(f"  {c(f'{e.rank}.', 'dim')} {e.name}  {c(msg, 'red')}")
             continue
         rank = c(f"{medals.get(e.rank, str(e.rank))}.", "bold")
         name = f"{e.name[:32]:<32}"

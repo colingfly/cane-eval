@@ -137,10 +137,18 @@ cane-eval leaderboard examples/leaderboard/benchmark.yaml \
 
 Every competitor answers the same suite; one judge scores them all, so the comparison is apples-to-apples. A competitor whose run fails becomes an `error` row instead of aborting the board.
 
-**All open-source, one key.** The judge can be open-weight too. Route every model — competitors *and* judge — through a single OpenAI-compatible endpoint (OpenRouter, Together, Groq, Fireworks, or a local vLLM/Ollama) and keep keys out of YAML with `api_key_env`:
+**All open-source, one key.** The judge can be open-weight too. Route every model — competitors *and* judge — through a single OpenAI-compatible endpoint (OpenRouter, Together, Groq, Fireworks, or a local vLLM/Ollama) and keep keys out of YAML with `api_key_env`.
+
+> OpenAI-compatible endpoints need the `openai` client: `pip install cane-eval[openai]` (or `pip install openai`). Without it, every competitor shows `run failed: ... requires the openai package`.
 
 ```bash
+pip install cane-eval[openai]
+
+# macOS / Linux (bash/zsh):
 export OPENROUTER_API_KEY=sk-or-...
+# Windows PowerShell:
+#   $env:OPENROUTER_API_KEY = "sk-or-..."
+
 cane-eval leaderboard examples/leaderboard/benchmark.yaml \
     --config examples/leaderboard/competitors.opensource.yaml
 ```
